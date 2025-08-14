@@ -3,6 +3,24 @@ import { prisma } from "@/lib/prisma"
 import { generateTextEmbedding } from "@/lib/gemini"
 import { findMostSimilar } from "@/lib/vector"
 
+// Helper function to clean captions
+function cleanCaption(caption?: string): string | null {
+  if (!caption) return null
+  
+  // If caption contains JSON structure, extract just the caption text
+  if (caption.includes('"caption"')) {
+    try {
+      const parsed = JSON.parse(caption)
+      return parsed.caption || caption
+    } catch {
+      // If parsing fails, return as is
+      return caption
+    }
+  }
+  
+  return caption
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { folderId, query, topK = 12 } = await request.json()
@@ -21,12 +39,11 @@ export async function POST(request: NextRequest) {
     // Generate query embedding
     const queryEmbedding = await generateTextEmbedding(query.trim())
 
-    // Get all completed images with embeddings
+    // Get all completed images
     const images = await prisma.image.findMany({
       where: {
         folderId,
         status: "completed",
-        captionVec: { not: null },
       },
       select: {
         id: true,
@@ -47,7 +64,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Prepare candidates for similarity search
+    // Prepare candidates for similarity search - filter for images with embeddings
     const candidates = images
       .filter((img) => img.captionVec && Array.isArray(img.captionVec))
       .map((img) => ({
@@ -65,9 +82,10 @@ export async function POST(request: NextRequest) {
     // Find most similar images
     const results = findMostSimilar(queryEmbedding, candidates, maxResults)
 
-    // Format results - remove unused variables
+    // Format results - remove unused variables and clean captions
     const formattedResults = results.map(({ similarity, ...image }) => ({
       ...image,
+      caption: cleanCaption(image.caption as string | undefined), // Type assertion for caption
       similarity: Math.round(similarity * 1000) / 1000, // Round to 3 decimal places
     }))
 

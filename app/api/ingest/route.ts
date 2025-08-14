@@ -92,19 +92,26 @@ export async function POST(request: NextRequest) {
 
     // Create image records
     console.log("💾 Creating image records in database...")
-    const imageData = result.images.map((file) => ({
-      folderId: folder.id,
-      fileId: file.id,
-      name: file.name,
-      mimeType: file.mimeType,
-      thumbnailLink: file.thumbnailLink || "",
-      webViewLink: file.webViewLink || "",
-      size: file.size ? Number.parseInt(file.size) : null,
-      md5Checksum: file.md5Checksum,
-      modifiedTime: file.modifiedTime ? new Date(file.modifiedTime) : null,
-      etag: file.version,
-      status: "pending",
-    }))
+    const imageData = result.images
+      .filter((file) => file.id && file.name && file.mimeType) // Filter out files without required fields
+      .map((file) => ({
+        folderId: folder.id,
+        fileId: file.id!, // Non-null assertion since we filtered
+        name: file.name!,
+        mimeType: file.mimeType!,
+        thumbnailLink: file.thumbnailLink || "",
+        webViewLink: file.webViewLink || "",
+        size: file.size ? Number.parseInt(file.size) : null,
+        md5Checksum: file.md5Checksum,
+        modifiedTime: file.modifiedTime ? new Date(file.modifiedTime) : null,
+        etag: file.version,
+        status: "pending",
+      }))
+
+    if (imageData.length === 0) {
+      console.log("❌ No valid images found after filtering")
+      return NextResponse.json({ error: "No valid images found in the folder" }, { status: 400 })
+    }
 
     await prisma.image.createMany({
       data: imageData,

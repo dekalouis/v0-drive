@@ -71,7 +71,7 @@ export function UrlForm({ onSuccess }: UrlFormProps) {
               className="text-sm"
             />
             <p className="text-xs text-muted-foreground">
-              Make sure the folder is shared with "Anyone with the link" (viewer access)
+              Make sure the folder is shared with &quot;Anyone with the link&quot; (viewer access)
             </p>
           </div>
 
@@ -99,6 +99,12 @@ export function UrlForm({ onSuccess }: UrlFormProps) {
           </p>
           <p>
             <strong>How it works:</strong> We&apos;ll analyze each image with AI to create searchable captions
+          </p>
+          <p>
+            <strong>Privacy:</strong> Images are processed securely and not stored permanently
+          </p>
+          <p>
+            <strong>Note:</strong> The folder must be set to &quot;Anyone with the link&quot; (viewer) for this to work
           </p>
         </div>
       </CardContent>

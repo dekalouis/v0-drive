@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Search, Image as ImageIcon, Loader2, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react"
-import Image from 'next/image'
+import { ImageCard } from "@/components/image-card"
 
 interface Image {
   id: string
@@ -88,10 +88,10 @@ export default function FolderPage() {
       
       if (response.ok) {
         const data = await response.json()
-        // Format results - remove unused variables
-        const formattedResults = data.results.map(({ similarity, ...image }) => ({
-          ...image,
-          similarity: Math.round(similarity * 1000) / 1000, // Round to 3 decimal places
+        // Format results with proper typing
+        const formattedResults = data.results.map((result: { similarity: number; [key: string]: unknown }) => ({
+          ...result,
+          similarity: Math.round(result.similarity * 1000) / 1000, // Round to 3 decimal places
         }))
         setSearchResults(formattedResults)
       }
@@ -412,93 +412,12 @@ export default function FolderPage() {
         {/* Images Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {currentImages.map((image) => (
-            <Card key={image.id} className={`overflow-hidden ${image.status === "failed" ? "opacity-60" : ""}`}>
-              <div className="aspect-square relative">
-                {image.fileId ? (
-                  <Image
-                    src={`/api/image-proxy?fileId=${image.fileId}`}
-                    alt={image.name}
-                    width={200}
-                    height={200}
-                    className="w-full h-full object-cover"
-                  />
-                ) : image.thumbnailLink ? (
-                  <Image
-                    src={`/api/image-proxy?url=${encodeURIComponent(image.thumbnailLink)}`}
-                    alt={image.name}
-                    width={200}
-                    height={200}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-muted flex items-center justify-center">
-                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
-                  </div>
-                )}
-                {/* Fallback placeholder */}
-                <div className="w-full h-full bg-muted flex items-center justify-center hidden">
-                  <ImageIcon className="h-8 w-8 text-muted-foreground" />
-                </div>
-                
-                {/* Status badge */}
-                <div className="absolute top-2 right-2">
-                  <Badge variant="secondary" className="text-xs">
-                    {image.status}
-                  </Badge>
-                </div>
-                
-                {/* Retry button for failed images */}
-                {image.status === "failed" && (
-                  <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                    <Button
-                      onClick={() => handleRetryImage(image.id)}
-                      disabled={retryingImages.has(image.id)}
-                      size="sm"
-                      className="bg-white/90 hover:bg-white text-black"
-                    >
-                      {retryingImages.has(image.id) ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4" />
-                      )}
-                      Retry
-                    </Button>
-                  </div>
-                )}
-                
-                {image.similarity && (
-                  <div className="absolute bottom-2 left-2">
-                    <Badge variant="outline" className="text-xs">
-                      {Math.round(image.similarity * 100)}% match
-                    </Badge>
-                  </div>
-                )}
-              </div>
-              <CardContent className="p-3">
-                <p className="text-sm font-medium truncate" title={image.name}>
-                  {image.name}
-                </p>
-                {image.caption && (
-                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                    {image.caption}
-                  </p>
-                )}
-                {image.tags && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {image.tags.split(',').slice(0, 3).map((tag, index) => (
-                      <Badge key={index} variant="outline" className="text-xs">
-                        {tag.trim()}
-                      </Badge>
-                    ))}
-                    {image.tags.split(',').length > 3 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{image.tags.split(',').length - 3}
-                      </Badge>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <ImageCard
+              key={image.id}
+              image={image}
+              onRetry={handleRetryImage}
+              retryingImages={retryingImages}
+            />
           ))}
         </div>
 

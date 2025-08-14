@@ -28,12 +28,6 @@ async function downloadImage(fileId: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer)
 }
 
-// Convert buffer to base64 data URL
-function bufferToDataUrl(buffer: Buffer, mimeType: string): string {
-  const base64 = buffer.toString("base64")
-  return `data:${mimeType};base64,${base64}`
-}
-
 // Caption an image using Gemini 2.5 Flash
 export async function captionImage(
   fileId: string,
