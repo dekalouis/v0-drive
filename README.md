@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Google Drive Image Searcher
 
-## Getting Started
+A powerful Next.js application that allows you to search through images in public Google Drive folders using AI-powered semantic search.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- 🔗 **Public Google Drive Integration**: Paste any public Google Drive folder URL
+- 🖼️ **Instant Image Display**: View thumbnails immediately while processing happens in background
+- 🤖 **AI-Powered Captioning**: Uses Gemini 2.5 Flash to generate detailed captions and tags
+- 🔍 **Semantic Search**: Find images using natural language queries with vector similarity
+- ⚡ **Real-time Progress**: Live updates on processing status with Server-Sent Events
+- 🎯 **Background Processing**: Efficient job queues with BullMQ and Redis
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Quick Start
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Clone and install dependencies**:
+   \`\`\`bash
+   npm install
+   \`\`\`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. **Set up your environment**:
+   \`\`\`bash
+   cp .env.example .env
+   # Edit .env with your API keys and database URLs
+   \`\`\`
 
-## Learn More
+3. **Set up the database and generate Prisma client**:
+   \`\`\`bash
+   npm run setup-dev
+   \`\`\`
 
-To learn more about Next.js, take a look at the following resources:
+4. **Start the development server**:
+   \`\`\`bash
+   npm run dev
+   \`\`\`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+5. **Start the background workers** (in a separate terminal):
+   \`\`\`bash
+   npm run workers
+   \`\`\`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Environment Variables
 
-## Deploy on Vercel
+- `DATABASE_URL`: PostgreSQL connection string with pgvector support
+- `REDIS_URL`: Redis connection string for job queues
+- `GOOGLE_DRIVE_API_KEY`: Google Drive API key for accessing public folders
+- `GEMINI_API_KEY`: Google AI API key for image captioning
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Usage
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Visit `http://localhost:3000`
+2. Paste a public Google Drive folder URL
+3. Watch as images are displayed immediately and processed in the background
+4. Use the search box to find images using natural language queries
+5. View detailed captions and similarity scores
+
+## Architecture
+
+- **Frontend**: Next.js 15 with React Server Components
+- **Database**: PostgreSQL with pgvector for vector similarity search
+- **Background Jobs**: BullMQ with Redis for reliable job processing
+- **AI**: Google Gemini 2.5 Flash for image analysis and text embeddings
+- **Real-time Updates**: Server-Sent Events for live progress tracking
+
+## Scripts
+
+- `npm run dev` - Start development server
+- `npm run workers` - Start background job workers
+- `npm run db:generate` - Generate Prisma client
+- `npm run db:push` - Push schema to database
+- `npm run health-check` - Check system health
+- `npm run clean-queues` - Clean job queues

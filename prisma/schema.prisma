@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enable pgvector extension
+generator pgvector {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+model Folder {
+  id              String   @id @default(cuid())
+  folderId        String   @unique // Google folder ID
+  folderUrl       String
+  status          String   // 'pending' | 'processing' | 'completed' | 'failed'
+  totalImages     Int      @default(0)
+  processedImages Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  images          Image[]
+
+  @@map("folders")
+}
+
+model Image {
+  id             String    @id @default(cuid())
+  folderId       String
+  fileId         String    @unique
+  name           String
+  mimeType       String
+  thumbnailLink  String
+  webViewLink    String
+  downloadUrl    String?   // resolved server-side; optional
+  size           Int?
+  md5Checksum    String?
+  modifiedTime   DateTime?
+  etag           String?   // or 'version'/'rev' from Drive
+  status         String    // 'pending' | 'processing' | 'completed' | 'failed'
+  caption        String?
+  tags           String?   // comma-separated
+  captionVec     Json?     // Vector embeddings stored as JSON array
+  error          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  folder         Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@index([folderId])
+  @@map("images")
+}
