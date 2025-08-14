@@ -7,10 +7,23 @@ import { findMostSimilar } from "@/lib/vector"
 function cleanCaption(caption?: string): string | null {
   if (!caption) return null
   
+  // Handle HTML-encoded JSON strings
+  let cleanedCaption = caption
+  
+  // Decode HTML entities first
+  if (caption.includes('&quot;')) {
+    cleanedCaption = caption.replace(/&quot;/g, '"')
+  }
+  
+  // Remove markdown code blocks if present
+  if (cleanedCaption.startsWith('```json') && cleanedCaption.endsWith('```')) {
+    cleanedCaption = cleanedCaption.replace(/^```json\n/, '').replace(/\n```$/, '')
+  }
+  
   // If caption contains JSON structure, extract just the caption text
-  if (caption.includes('"caption"')) {
+  if (cleanedCaption.includes('"caption"')) {
     try {
-      const parsed = JSON.parse(caption)
+      const parsed = JSON.parse(cleanedCaption)
       return parsed.caption || caption
     } catch {
       // If parsing fails, return as is
