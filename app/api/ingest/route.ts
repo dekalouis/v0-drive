@@ -1,34 +1,34 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { extractFolderId, validateAndListImages, isValidDriveUrl } from "@/lib/drive"
+import { validateAndListImages } from "@/lib/drive"
 import { queueFolderProcessing } from "@/lib/queue"
 
-export async function POST(request: NextRequest) {
-  console.log("🚀 Ingest API called")
+// Get the maximum images limit from environment variable
+const getMaxImagesLimit = (): number | null => {
+  const limit = process.env.MAX_IMAGES_PER_FOLDER
+  if (!limit) return null
   
+  const parsed = parseInt(limit, 10)
+  return isNaN(parsed) || parsed <= 0 ? null : parsed
+}
+
+export async function POST(request: NextRequest) {
   try {
     const { folderUrl } = await request.json()
-    console.log(`📁 Processing folder URL: ${folderUrl}`)
 
-    if (!folderUrl || typeof folderUrl !== "string") {
-      console.log("❌ Invalid folder URL provided")
-      return NextResponse.json({ error: "Folder URL is required" }, { status: 400 })
+    if (!folderUrl) {
+      return NextResponse.json({ error: "folderUrl is required" }, { status: 400 })
     }
 
-    // Validate URL format
-    if (!isValidDriveUrl(folderUrl)) {
-      console.log("❌ Invalid Google Drive URL format")
-      return NextResponse.json({ error: "Invalid Google Drive folder URL format" }, { status: 400 })
+    // Extract folder ID from URL
+    console.log("🔍 Extracting folder ID from URL...")
+    const folderIdMatch = folderUrl.match(/\/folders\/([a-zA-Z0-9-_]+)/)
+    if (!folderIdMatch) {
+      return NextResponse.json({ error: "Invalid Google Drive folder URL" }, { status: 400 })
     }
 
-    // Extract folder ID
-    const folderId = extractFolderId(folderUrl)
-    if (!folderId) {
-      console.log("❌ Could not extract folder ID from URL")
-      return NextResponse.json({ error: "Could not extract folder ID from URL" }, { status: 400 })
-    }
-    
-    console.log(`🔍 Extracted folder ID: ${folderId}`)
+    const folderId = folderIdMatch[1]
+    console.log(`📁 Extracted folder ID: ${folderId}`)
 
     // Check if folder already exists
     console.log("🔍 Checking if folder already exists in database...")
@@ -67,6 +67,16 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`✅ Found ${result.count} images in folder`)
+    
+    // Check against maximum images limit
+    const maxImagesLimit = getMaxImagesLimit()
+    if (maxImagesLimit && result.count > maxImagesLimit) {
+      console.log(`❌ Folder exceeds maximum image limit: ${result.count} > ${maxImagesLimit}`)
+      return NextResponse.json({ 
+        error: `Your folder has too many images! Make sure that the folder does not contain more than ${maxImagesLimit} images!` 
+      }, { status: 400 })
+    }
+    
     console.log("📋 Image details:")
     result.images.forEach((img, index: number) => {
       console.log(`   ${index + 1}. ${img.name || 'Unknown'} (${img.mimeType || 'Unknown'}) - ${img.id || 'Unknown'}`)

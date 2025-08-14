@@ -49,51 +49,41 @@ npm run folder:retry <folderId>
 npx tsx scripts/retry-folder.ts <folderId>
 ```
 
-## 🔧 **Worker Management**
+## 🔧 **Configuration**
 
-### Start workers:
-```bash
-npm run workers:start
-```
+### Environment Variables
+- `MAX_IMAGES_PER_FOLDER` - Set maximum images per folder (default: no limit)
+  - Example: `MAX_IMAGES_PER_FOLDER=200`
+  - Set to `0` or leave unset to disable the limit
 
-### Stop workers:
-```bash
-npm run workers:stop
-```
-
-### Restart workers:
-```bash
-npm run workers:restart
-```
-
-### View worker logs:
-```bash
-npm run workers:logs
-```
-
-### Check worker status:
-```bash
-npm run workers:status
+### Example .env file:
+```env
+DATABASE_URL=postgresql://postgres:password@localhost:5432/drive_searcher
+REDIS_URL=redis://localhost:6379
+GOOGLE_DRIVE_API_KEY=your_api_key_here
+GEMINI_API_KEY=your_gemini_key_here
+MAX_IMAGES_PER_FOLDER=200
 ```
 
 ## 📝 **Best Practices for Data Deletion**
 
-1. **Always use the safe delete script** instead of manual DB deletion
-2. **If you manually delete from DB**, run `npm run queue:clear` immediately
-3. **Check folder status** before and after operations
-4. **Restart workers** if you encounter processing issues
+1. **Always use the safe delete script** when removing folders from the database
+2. **Clear queue data** after manual database deletions to prevent conflicts
+3. **Check folder status** before retrying to understand the current state
+4. **Monitor worker logs** to ensure background processing is working
 
-## 🔧 **Troubleshooting**
+## 🚀 **Railway Deployment**
 
-- **Workers not processing**: Run `npm run queue:clear` then restart workers
-- **Folder stuck in pending**: Run `npm run folder:retry <folderId>`
-- **Database/Queue mismatch**: Run `npm run queue:clear` and restart workers
-- **Workers not running automatically**: Use `npm run start:workers-only` for persistent background workers
+### Environment Variables for Railway:
+- Add all required environment variables in Railway project settings
+- Set `MAX_IMAGES_PER_FOLDER=200` for production (recommended)
+- Use Railway's PostgreSQL and Redis services
 
-## 🎯 **Recommended Workflow**
+### Deployment Commands:
+```bash
+# Pre-deploy Command
+npm run db:push
 
-1. **Start workers once**: `npm run start:workers-only` (they'll keep running)
-2. **Start dev server**: `npm run dev` (in another terminal)
-3. **Add folders**: Use the web interface
-4. **Monitor**: Use `npm run workers:status` to check worker health
-5. **Delete data**: Use `npm run folder:delete <folderId>` for safe deletion 
+# Start Command
+npm run start:all
+``` 
