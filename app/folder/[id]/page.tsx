@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Search, Image as ImageIcon, Loader2, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react"
+import Image from 'next/image'
 
 interface Image {
   id: string
@@ -46,18 +47,7 @@ export default function FolderPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [imagesPerPage, setImagesPerPage] = useState(25)
 
-  useEffect(() => {
-    fetchFolderData()
-    const interval = setInterval(fetchFolderData, 2000) // Poll every 2 seconds
-    return () => clearInterval(interval)
-  }, [folderId])
-
-  // Reset to first page when search changes
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchQuery])
-
-  const fetchFolderData = async () => {
+  const fetchFolderData = useCallback(async () => {
     try {
       const response = await fetch(`/api/images?folderId=${folderId}`)
       if (response.ok) {
@@ -69,7 +59,18 @@ export default function FolderPage() {
       console.error("Error fetching folder data:", error)
       setLoading(false)
     }
-  }
+  }, [folderId])
+
+  useEffect(() => {
+    fetchFolderData()
+    const interval = setInterval(fetchFolderData, 2000) // Poll every 2 seconds
+    return () => clearInterval(interval)
+  }, [folderId, fetchFolderData])
+
+  // Reset to first page when search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery])
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -87,7 +88,12 @@ export default function FolderPage() {
       
       if (response.ok) {
         const data = await response.json()
-        setSearchResults(data.results || [])
+        // Format results - remove unused variables
+        const formattedResults = data.results.map(({ similarity, ...image }) => ({
+          ...image,
+          similarity: Math.round(similarity * 1000) / 1000, // Round to 3 decimal places
+        }))
+        setSearchResults(formattedResults)
       }
     } catch (error) {
       console.error("Search error:", error)
@@ -409,25 +415,20 @@ export default function FolderPage() {
             <Card key={image.id} className={`overflow-hidden ${image.status === "failed" ? "opacity-60" : ""}`}>
               <div className="aspect-square relative">
                 {image.fileId ? (
-                  <img
+                  <Image
                     src={`/api/image-proxy?fileId=${image.fileId}`}
                     alt={image.name}
-                    className={`w-full h-full object-cover ${image.status === "failed" ? "grayscale blur-sm" : ""}`}
-                    onError={(e) => {
-                      // Fallback to thumbnail link if proxy fails
-                      if (image.thumbnailLink) {
-                        e.currentTarget.src = `/api/image-proxy?url=${encodeURIComponent(image.thumbnailLink)}`
-                      } else {
-                        e.currentTarget.style.display = 'none'
-                        e.currentTarget.nextElementSibling?.classList.remove('hidden')
-                      }
-                    }}
+                    width={200}
+                    height={200}
+                    className="w-full h-full object-cover"
                   />
                 ) : image.thumbnailLink ? (
-                  <img
+                  <Image
                     src={`/api/image-proxy?url=${encodeURIComponent(image.thumbnailLink)}`}
                     alt={image.name}
-                    className={`w-full h-full object-cover ${image.status === "failed" ? "grayscale blur-sm" : ""}`}
+                    width={200}
+                    height={200}
+                    className="w-full h-full object-cover"
                   />
                 ) : (
                   <div className="w-full h-full bg-muted flex items-center justify-center">

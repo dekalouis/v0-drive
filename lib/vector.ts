@@ -22,9 +22,9 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
 
 export function findMostSimilar(
   queryVector: number[],
-  candidates: Array<{ id: string; vector: number[]; [key: string]: any }>,
+  candidates: Array<{ id: string; vector: number[]; [key: string]: unknown }>,
   topK = 10,
-): Array<{ id: string; similarity: number; [key: string]: any }> {
+): Array<{ id: string; similarity: number; [key: string]: unknown }> {
   const similarities = candidates
     .map((candidate) => ({
       ...candidate,

@@ -65,8 +65,8 @@ export async function POST(request: NextRequest) {
     // Find most similar images
     const results = findMostSimilar(queryEmbedding, candidates, maxResults)
 
-    // Format results
-    const formattedResults = results.map(({ similarity, vector, captionVec, ...image }) => ({
+    // Format results - remove unused variables
+    const formattedResults = results.map(({ similarity, ...image }) => ({
       ...image,
       similarity: Math.round(similarity * 1000) / 1000, // Round to 3 decimal places
     }))

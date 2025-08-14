@@ -98,7 +98,7 @@ export function UrlForm({ onSuccess }: UrlFormProps) {
             <strong>Supported formats:</strong> JPG, PNG, GIF, WebP, BMP
           </p>
           <p>
-            <strong>How it works:</strong> We'll analyze each image with AI to create searchable captions
+            <strong>How it works:</strong> We&apos;ll analyze each image with AI to create searchable captions
           </p>
         </div>
       </CardContent>

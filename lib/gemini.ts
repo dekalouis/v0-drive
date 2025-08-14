@@ -48,7 +48,6 @@ export async function captionImage(
   try {
     // Download the image
     const imageBuffer = await downloadImage(fileId)
-    const dataUrl = bufferToDataUrl(imageBuffer, mimeType)
 
     // Prepare the prompt
     const prompt = `You are an image captioning assistant. Analyze this image and provide a concise, literal description (2-3 sentences). Avoid speculation and brand identification unless clearly visible. 

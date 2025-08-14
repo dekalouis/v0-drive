@@ -66,16 +66,18 @@ export async function validateAndListImages(folderId: string) {
       images: response.data.files || [],
       count: response.data.files?.length || 0,
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Drive API error:", error)
 
-    if (error.code === 403 || error.code === 404) {
-      return {
-        success: false,
-        error:
-          "The folder isn't publicly accessible. Please set sharing to 'Anyone with the link' (viewer) and try again.",
-        images: [],
-        count: 0,
+    if (error && typeof error === 'object' && 'code' in error) {
+      const driveError = error as { code: number }
+      if (driveError.code === 403 || driveError.code === 404) {
+        return {
+          success: false,
+          error: "The folder isn't publicly accessible. Please set sharing to 'Anyone with the link' (viewer) and try again.",
+          images: [],
+          count: 0,
+        }
       }
     }
 
