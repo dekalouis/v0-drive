@@ -70,3 +70,4 @@ A powerful Next.js application that allows you to search through images in publi
 - `npm run db:push` - Push schema to database
 - `npm run health-check` - Check system health
 - `npm run clean-queues` - Clean job queues
+# v0-drive
