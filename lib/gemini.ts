@@ -43,7 +43,7 @@ export async function captionImage(
   tags: string[]
 }> {
   const genAI = getGeminiClient()
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" })
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" })
 
   try {
     // Download the image
@@ -164,4 +164,4 @@ class RateLimiter {
 }
 
 // Global rate limiter: 60 requests per minute
-export const geminiRateLimiter = new RateLimiter(60, 60 * 1000)
+export const geminiRateLimiter = new RateLimiter(30, 60 * 1000)

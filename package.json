@@ -15,7 +15,13 @@
     "queue:clean": "tsx scripts/clean-queues.ts",
     "postinstall": "prisma generate",
     "setup-dev": "tsx scripts/setup-dev.ts",
-    "health-check": "tsx scripts/health-check.ts"
+    "health-check": "tsx scripts/health-check.ts",
+    "workers:start": "pm2 start ecosystem.config.js",
+    "workers:stop": "pm2 stop drive-image-workers",
+    "workers:restart": "pm2 restart drive-image-workers",
+    "workers:logs": "pm2 logs drive-image-workers",
+    "workers:status": "pm2 status",
+    "start:all": "./scripts/start-all.sh"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
