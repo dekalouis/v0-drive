@@ -72,7 +72,7 @@ export async function queueFolderProcessing(folderId: string, googleFolderId: st
   try {
     await folderQueue.add("process", { folderId, googleFolderId } as FolderJobData, {
       jobId, // Use folder ID for deduplication
-      delay: 1000, // Small delay to ensure DB consistency
+      // delay: 1000, // Small delay to ensure DB consistency - REMOVED FOR TESTING
     })
 
     console.log(`✅ Successfully queued folder processing job: ${jobId}`)

@@ -9,10 +9,26 @@ const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379"
   maxRetriesPerRequest: null,
 })
 
+// Add connection event logging
+connection.on("connect", () => {
+  console.log("🔗 Worker Redis connected successfully")
+})
+
+connection.on("error", (error) => {
+  console.error("❌ Worker Redis connection error:", error)
+})
+
+connection.on("ready", () => {
+  console.log("✅ Worker Redis ready for operations")
+})
+
 // Folder processing worker
 export const folderWorker = new Worker(
   "folders",
   async (job: Job<FolderJobData>) => {
+    console.log(`🎯 Folder worker received job: ${job.id} (${job.name})`)
+    console.log(`📋 Job data:`, job.data)
+    
     const { folderId, googleFolderId } = job.data
 
     console.log(`Processing folder: ${googleFolderId}`)
@@ -86,9 +102,12 @@ export const folderWorker = new Worker(
 export const imageWorker = new Worker(
   "images",
   async (job: Job<ImageJobData>) => {
+    console.log(`🎯 Image worker received job: ${job.id} (${job.name})`)
+    console.log(`📋 Job data:`, job.data)
+    
     const { imageId, fileId, etag, folderId } = job.data
 
-    console.log(`Processing image: ${fileId}`)
+    console.log(`Processing image: ${fileId} (etag: ${etag})`)
 
     try {
       // Update image status to processing
@@ -184,19 +203,27 @@ async function updateFolderProgress(folderId: string) {
 
 // Worker event handlers
 folderWorker.on("completed", (job) => {
-  console.log(`Folder job ${job.id} completed`)
+  console.log(`✅ Folder job ${job.id} completed`)
 })
 
 folderWorker.on("failed", (job, err) => {
-  console.error(`Folder job ${job?.id} failed:`, err)
+  console.error(`❌ Folder job ${job?.id} failed:`, err)
+})
+
+folderWorker.on("ready", () => {
+  console.log("🚀 Folder worker is ready to process jobs")
 })
 
 imageWorker.on("completed", (job) => {
-  console.log(`Image job ${job.id} completed`)
+  console.log(`✅ Image job ${job.id} completed`)
 })
 
 imageWorker.on("failed", (job, err) => {
-  console.error(`Image job ${job?.id} failed:`, err)
+  console.error(`❌ Image job ${job?.id} failed:`, err)
+})
+
+imageWorker.on("ready", () => {
+  console.log("🚀 Image worker is ready to process jobs")
 })
 
 // Graceful shutdown
