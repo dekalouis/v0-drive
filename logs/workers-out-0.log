@@ -54,3 +54,16 @@
 > drive-image-searcher@0.1.0 workers
 > tsx scripts/start-workers.ts
 
+2025-08-15T11:35:47: 2025-08-15T11:35:47: 2025-08-15T11:35:48: 
+> drive-image-searcher@0.1.0 workers
+> tsx scripts/start-workers.ts
+
+2025-08-15T11:56:38: 2025-08-15T11:56:38: 2025-08-15T11:56:38: 
+> drive-image-searcher@0.1.0 workers:optimized
+> tsx scripts/start-optimized-workers.ts
+
+2025-08-15T11:56:40: 2025-08-15T11:56:40: 
+> drive-image-searcher@0.1.0 workers:optimized
+> tsx scripts/start-optimized-workers.ts
+
+2025-08-15T12:03:07: 

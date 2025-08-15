@@ -6,9 +6,9 @@ async function safeDelete(folderId?: string) {
   console.log("This will delete data from both database and queue to prevent conflicts")
   
   try {
-    if (folderId) {
+    if (folderId && folderId !== "DELETE" && folderId !== "ALL") {
       // Delete specific folder
-      console.log(`\n🔍 Looking for folder: ${folderId}`)
+      console.log(`\n�� Looking for folder: ${folderId}`)
       
       const folder = await prisma.folder.findUnique({
         where: { folderId },
@@ -34,27 +34,47 @@ async function safeDelete(folderId?: string) {
       await clearQueueJobs(folderId)
       
     } else {
-      // Delete all data
-      console.log("\n⚠️ WARNING: This will delete ALL folders and images!")
-      console.log("Type 'DELETE ALL' to confirm:")
-      
-      // For safety, we'll just show what would be deleted
-      const folders = await prisma.folder.findMany({
-        include: { _count: { select: { images: true } } }
-      })
-      
-      console.log(`\n📊 Current data:`)
-      console.log(`   Folders: ${folders.length}`)
-      console.log(`   Total Images: ${folders.reduce((sum, f) => sum + f._count.images, 0)}`)
-      
-      folders.forEach(folder => {
-        console.log(`   - ${folder.folderId}: ${folder._count.images} images`)
-      })
-      
-      console.log("\n💡 To delete a specific folder, run:")
-      console.log(`   npx tsx scripts/safe-delete.ts <folderId>`)
-      console.log("\n💡 To clear all queue data, run:")
-      console.log(`   npx tsx scripts/clear-all-queues.ts`)
+      // Check if user wants to delete all
+      const args = process.argv.slice(2)
+      if (args.includes("DELETE") && args.includes("ALL")) {
+        console.log("\n⚠️ CONFIRMED: Deleting ALL folders and images!")
+        
+        // Get count before deletion
+        const folders = await prisma.folder.findMany({
+          include: { _count: { select: { images: true } } }
+        })
+        
+        const totalImages = folders.reduce((sum, f) => sum + f._count.images, 0)
+        
+        // Delete all folders (this will cascade delete all images)
+        await prisma.folder.deleteMany({})
+        
+        console.log(`✅ Deleted ${folders.length} folders and ${totalImages} images`)
+        
+        // Clear all queue data
+        await clearAllQueues()
+        
+      } else {
+        // Show current data without deleting
+        console.log("\n📊 Current data (no deletion performed):")
+        const folders = await prisma.folder.findMany({
+          include: { _count: { select: { images: true } } }
+        })
+        
+        console.log(`   Folders: ${folders.length}`)
+        console.log(`   Total Images: ${folders.reduce((sum, f) => sum + f._count.images, 0)}`)
+        
+        folders.forEach(folder => {
+          console.log(`   - ${folder.folderId}: ${folder._count.images} images`)
+        })
+        
+        console.log("\n💡 To delete a specific folder, run:")
+        console.log(`   npx tsx scripts/safe-delete.ts <folderId>`)
+        console.log("\n�� To delete ALL data, run:")
+        console.log(`   npx tsx scripts/safe-delete.ts DELETE ALL`)
+        console.log("\n�� To clear all queue data, run:")
+        console.log(`   npx tsx scripts/clear-all-queues.ts`)
+      }
     }
     
   } catch (error) {
@@ -62,6 +82,23 @@ async function safeDelete(folderId?: string) {
   }
   
   process.exit(0)
+}
+
+async function clearAllQueues() {
+  console.log("\n�� Clearing all queue data...")
+  
+  try {
+    // Clear folder queue
+    await folderQueue.obliterate()
+    console.log("✅ Folder queue cleared")
+    
+    // Clear image queue  
+    await imageQueue.obliterate()
+    console.log("✅ Image queue cleared")
+    
+  } catch (error) {
+    console.error("❌ Error clearing queues:", error)
+  }
 }
 
 async function clearQueueJobs(folderId: string) {
@@ -102,4 +139,4 @@ async function clearQueueJobs(folderId: string) {
 // Get folder ID from command line argument
 const folderId = process.argv[2]
 
-safeDelete(folderId) 
+safeDelete(folderId)
