@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai"
-import { getDownloadUrl, getAuthenticatedDownloadUrl } from "@/lib/drive"
+import { getDownloadUrl, getAuthenticatedDownloadUrl, getDriveClient } from "@/lib/drive"
 
 // Initialize Gemini AI client
 function getGeminiClient() {
@@ -220,6 +220,173 @@ export async function generateCaptionEmbedding(caption: string, tags: string[]):
   // Combine caption and tags for richer semantic representation
   const combinedText = `${caption} ${tags.join(" ")}`
   return generateTextEmbedding(combinedText)
+}
+
+// Fast tags-only image analysis using Gemini
+export async function extractImageTags(
+  fileId: string,
+  mimeType: string,
+  useThumbnail: boolean = true
+): Promise<{
+  tags: string[]
+  quickDescription?: string
+}> {
+  const genAI = getGeminiClient()
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" })
+
+  try {
+    console.log(`🏷️  Extracting tags for ${fileId} (thumbnail: ${useThumbnail})`)
+    
+    // Rate limiting
+    await geminiRateLimiter.waitIfNeeded()
+
+    // Download image (thumbnail or full)
+    const downloadStart = Date.now()
+    const imageBuffer = useThumbnail 
+      ? await downloadThumbnail(fileId)
+      : await downloadWithRetry(fileId, 3)
+    const downloadTime = Date.now() - downloadStart
+    console.log(`⏱️  Download time for ${fileId}: ${downloadTime}ms`)
+
+    // Optimized prompt for fast tag extraction
+    const prompt = `Analyze this image and extract key visual features as tags. Focus on:
+- Objects and people
+- Colors and clothing
+- Sports/activities
+- Settings and environment
+- Key visual details
+
+Return JSON format:
+{
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8"],
+  "quickDescription": "One sentence describing the main scene"
+}
+
+Tags should be specific nouns, adjectives, or activity names. Aim for 6-10 tags that would help someone find this image.`
+
+    // Generate content
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: imageBuffer.toString("base64"),
+          mimeType,
+        },
+      },
+    ])
+
+    const response = await result.response
+    const text = response.text()
+
+    // Clean the response text
+    let cleanedText = text.trim()
+    if (cleanedText.startsWith('```json') && cleanedText.endsWith('```')) {
+      cleanedText = cleanedText.replace(/^```json\n?/, '').replace(/\n?```$/, '')
+    } else if (cleanedText.startsWith('```') && cleanedText.endsWith('```')) {
+      cleanedText = cleanedText.replace(/^```\n?/, '').replace(/\n?```$/, '')
+    }
+    cleanedText = cleanedText.trim()
+
+    // Parse JSON response
+    try {
+      const parsed = JSON.parse(cleanedText)
+      
+      if (!parsed.tags || !Array.isArray(parsed.tags)) {
+        throw new Error("Invalid tags format")
+      }
+
+      return {
+        tags: parsed.tags.slice(0, 10), // Limit to 10 tags
+        quickDescription: parsed.quickDescription || undefined
+      }
+    } catch (parseError) {
+      console.warn("Failed to parse Gemini response, extracting tags manually:", cleanedText)
+      
+      // Fallback: extract any array-like structure
+      const tagMatch = cleanedText.match(/\[([^\]]+)\]/)
+      if (tagMatch) {
+        const tags = tagMatch[1]
+          .split(',')
+          .map(tag => tag.trim().replace(/['"]/g, ''))
+          .filter(tag => tag.length > 0)
+          .slice(0, 10)
+        
+        return { tags, quickDescription: "Image analysis" }
+      }
+      
+      throw new Error(`Failed to parse tags from Gemini response: ${parseError}`)
+    }
+  } catch (error) {
+    console.error("Fast tagging error:", error)
+    throw new Error(`Failed to extract tags: ${error instanceof Error ? error.message : "Unknown error"}`)
+  }
+}
+
+// Download thumbnail image from Google Drive
+async function downloadThumbnail(fileId: string, maxRetries = 3): Promise<Buffer> {
+  // First, get the thumbnail URL from the API
+  const drive = getDriveClient()
+  
+  try {
+    const fileResponse = await drive.files.get({
+      fileId: fileId,
+      fields: "thumbnailLink"
+    })
+    
+    const thumbnailUrl = fileResponse.data.thumbnailLink
+    if (!thumbnailUrl) {
+      throw new Error("No thumbnail available, falling back to full image")
+    }
+    
+    console.log(`📸 Downloading thumbnail: ${fileId}`)
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Rate limit Google Drive requests
+        await driveRateLimiter.waitIfNeeded()
+        
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 15000) // Shorter timeout for thumbnails
+        
+        const response = await fetch(thumbnailUrl, {
+          headers: {
+            "User-Agent": "Drive-Image-Searcher/1.0",
+          },
+          signal: controller.signal,
+        })
+        
+        clearTimeout(timeoutId)
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        const arrayBuffer = await response.arrayBuffer()
+        const buffer = Buffer.from(arrayBuffer)
+        
+        console.log(`✅ Successfully downloaded thumbnail: ${fileId} (${buffer.length} bytes)`)
+        return buffer
+        
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        console.log(`❌ Thumbnail download attempt ${attempt}/${maxRetries} failed: ${errorMessage}`)
+        
+        if (attempt === maxRetries) {
+          throw new Error(`Failed to download thumbnail after ${maxRetries} attempts`)
+        }
+        
+        // Short backoff for thumbnails
+        const delay = Math.pow(1.5, attempt) * 500 // 750ms, 1.1s, 1.7s
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    throw new Error("Should never reach here")
+    
+  } catch {
+    console.warn(`Thumbnail not available for ${fileId}, falling back to full image`)
+    return downloadWithRetry(fileId, maxRetries)
+  }
 }
 
 // Rate limiting helper
