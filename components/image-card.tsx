@@ -87,8 +87,14 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
 
   const displayCaption = cleanCaption(image.caption)
 
-  // Generate image URL with retry parameter to bypass cache
+  // Generate image URL - prioritize thumbnails to avoid 403 errors
   const getImageUrl = () => {
+    // Use thumbnail first since full images are getting 403s
+    if (image.thumbnailLink) {
+      return image.thumbnailLink
+    }
+    
+    // Fallback to proxy for high-res if needed
     const baseUrl = `/api/image-proxy?fileId=${image.fileId}`
     return retryCount > 0 ? `${baseUrl}&retry=${retryCount}` : baseUrl
   }
@@ -112,23 +118,10 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
           </div>
         )}
 
-        {/* Main image */}
-        {!imageError && image.fileId ? (
+        {/* Main image - prioritize thumbnails */}
+        {!imageError && (image.thumbnailLink || image.fileId) ? (
           <Image
             src={getImageUrl()}
-            alt={image.name}
-            width={200}
-            height={200}
-            className={`w-full h-full object-cover transition-all duration-200 ${
-              image.status === "failed" ? "grayscale blur-sm" : ""
-            } ${isHovered ? "brightness-110" : ""} ${isLoading ? "opacity-0" : "opacity-100"}`}
-            onError={handleImageError}
-            onLoad={handleImageLoad}
-            priority={false}
-          />
-        ) : !imageError && image.thumbnailLink ? (
-          <Image
-            src={`/api/image-proxy?url=${encodeURIComponent(image.thumbnailLink)}`}
             alt={image.name}
             width={200}
             height={200}

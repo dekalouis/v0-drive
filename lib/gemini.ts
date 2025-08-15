@@ -234,92 +234,105 @@ export async function extractImageTags(
   const genAI = getGeminiClient()
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" })
 
-  try {
-    console.log(`🏷️  Extracting tags for ${fileId} (thumbnail: ${useThumbnail})`)
-    
-    // Rate limiting
-    await geminiRateLimiter.waitIfNeeded()
+  // Retry configuration for network failures
+  const maxRetries = 3
+  const baseDelay = 2000 // 2 seconds
 
-    // Download image (thumbnail or full)
-    const downloadStart = Date.now()
-    const imageBuffer = useThumbnail 
-      ? await downloadThumbnail(fileId)
-      : await downloadWithRetry(fileId, 3)
-    const downloadTime = Date.now() - downloadStart
-    console.log(`⏱️  Download time for ${fileId}: ${downloadTime}ms`)
-
-    // Optimized prompt for fast tag extraction
-    const prompt = `Analyze this image and extract key visual features as tags. Focus on:
-- Objects and people
-- Colors and clothing
-- Sports/activities
-- Settings and environment
-- Key visual details
-
-Return JSON format:
-{
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8"],
-  "quickDescription": "One sentence describing the main scene"
-}
-
-Tags should be specific nouns, adjectives, or activity names. Aim for 6-10 tags that would help someone find this image.`
-
-    // Generate content
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          data: imageBuffer.toString("base64"),
-          mimeType,
-        },
-      },
-    ])
-
-    const response = await result.response
-    const text = response.text()
-
-    // Clean the response text
-    let cleanedText = text.trim()
-    if (cleanedText.startsWith('```json') && cleanedText.endsWith('```')) {
-      cleanedText = cleanedText.replace(/^```json\n?/, '').replace(/\n?```$/, '')
-    } else if (cleanedText.startsWith('```') && cleanedText.endsWith('```')) {
-      cleanedText = cleanedText.replace(/^```\n?/, '').replace(/\n?```$/, '')
-    }
-    cleanedText = cleanedText.trim()
-
-    // Parse JSON response
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const parsed = JSON.parse(cleanedText)
+      console.log(`🏷️  Extracting tags for ${fileId} (thumbnail: ${useThumbnail}) - Attempt ${attempt}/${maxRetries}`)
       
-      if (!parsed.tags || !Array.isArray(parsed.tags)) {
-        throw new Error("Invalid tags format")
-      }
+      // Rate limiting
+      await geminiRateLimiter.waitIfNeeded()
 
-      return {
-        tags: parsed.tags.slice(0, 10), // Limit to 10 tags
-        quickDescription: parsed.quickDescription || undefined
-      }
-    } catch (parseError) {
-      console.warn("Failed to parse Gemini response, extracting tags manually:", cleanedText)
-      
-      // Fallback: extract any array-like structure
-      const tagMatch = cleanedText.match(/\[([^\]]+)\]/)
-      if (tagMatch) {
-        const tags = tagMatch[1]
-          .split(',')
-          .map(tag => tag.trim().replace(/['"]/g, ''))
-          .filter(tag => tag.length > 0)
-          .slice(0, 10)
+      // Download image (thumbnail or full) with timeout
+      const downloadStart = Date.now()
+      const imageBuffer = useThumbnail 
+        ? await downloadThumbnail(fileId, 3)
+        : await downloadWithRetry(fileId, 3)
+      const downloadTime = Date.now() - downloadStart
+      console.log(`⏱️  Download time for ${fileId}: ${downloadTime}ms`)
+
+      // Convert buffer to base64 for Gemini
+      const base64Image = imageBuffer.toString('base64')
+
+      const prompt = `Analyze this sports image and extract 6-10 key visual tags that describe what you see. Focus on:
+- Sport type (football, soccer, rugby, etc.)
+- Actions (running, jumping, throwing, etc.) 
+- People (players, coaches, referees, etc.)
+- Equipment (ball, cleats, uniform, etc.)
+- Environment (field, outdoor, indoor, etc.)
+- Colors and notable features
+
+Return ONLY a JSON object with this exact format:
+{
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6"],
+  "quickDescription": "Brief one-sentence description"
+}`
+
+      const aiStart = Date.now()
+      const result = await model.generateContent([
+        {
+          inlineData: {
+            data: base64Image,
+            mimeType: mimeType,
+          },
+        },
+        prompt,
+      ])
+      const aiTime = Date.now() - aiStart
+
+      const response = await result.response
+      const text = response.text()
+      console.log(`⏱️  AI processing time: ${aiTime}ms`)
+
+      try {
+        // Parse JSON response
+        const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, '').trim())
         
-        return { tags, quickDescription: "Image analysis" }
+        const tags = Array.isArray(parsed.tags) ? parsed.tags : []
+        const quickDescription = parsed.quickDescription || `Image with tags: ${tags.slice(0, 3).join(', ')}`
+
+        console.log(`🏷️  Generated tags for ${fileId}: [${tags.join(', ')}]`)
+
+        return {
+          tags,
+          quickDescription
+        }
+      } catch {
+        console.warn(`Failed to parse JSON response: ${text}`)
+        // Fallback: extract tags from text
+        const fallbackTags = text
+          .split(',')
+          .map(tag => tag.trim().replace(/[^\w\s]/g, ''))
+          .filter(tag => tag.length > 0)
+          .slice(0, 8)
+
+        return {
+          tags: fallbackTags.length > 0 ? fallbackTags : ['sports', 'activity'],
+          quickDescription: `Sports image with activities: ${fallbackTags.slice(0, 3).join(', ')}`
+        }
       }
+    } catch (error) {
+      const isLastAttempt = attempt === maxRetries
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       
-      throw new Error(`Failed to parse tags from Gemini response: ${parseError}`)
+      console.error(`Fast tagging error (attempt ${attempt}/${maxRetries}):`, errorMessage)
+
+      if (isLastAttempt) {
+        console.error(`💀 All tagging attempts failed for ${fileId}:`, errorMessage)
+        throw new Error(`Failed to extract tags: ${errorMessage}`)
+      } else {
+        // Exponential backoff with jitter
+        const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000
+        console.log(`⏳ Retrying in ${Math.round(delay)}ms...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
     }
-  } catch (error) {
-    console.error("Fast tagging error:", error)
-    throw new Error(`Failed to extract tags: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
+
+  // This should never be reached due to the throw in the catch block
+  throw new Error(`Failed to extract tags after ${maxRetries} attempts`)
 }
 
 // Download thumbnail image from Google Drive

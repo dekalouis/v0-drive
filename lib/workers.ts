@@ -254,20 +254,46 @@ export const imageWorker = new Worker(
         dbUpdateTime
       }
     } catch (error) {
-      console.error(`❌ Image processing failed for ${fileId}:`, error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      console.error(`❌ Image processing failed for ${fileId}: ${errorMessage}`)
+      
+      // Update progress even for failed images so UI doesn't get stuck
+      const currentProgress = folderProgress.get(folderId)
+      if (currentProgress) {
+        currentProgress.processedImages += 1
+        folderProgress.set(folderId, currentProgress)
+        
+        console.log(`📈 Folder Progress Update (including failed):`)
+        console.log(`   - Progress: ${currentProgress.processedImages}/${currentProgress.totalImages} images (${Math.round((currentProgress.processedImages / currentProgress.totalImages) * 100)}%)`)
+        console.log(`   - Status: processing`)
+        
+        // Check if folder is complete
+        if (currentProgress.processedImages >= currentProgress.totalImages) {
+          const totalTime = Date.now() - currentProgress.startTime
+          console.log(`🎉 Folder completed! Total time: ${Math.round(totalTime / 1000)}s`)
+          folderProgress.delete(folderId)
+          
+          // Update folder status in database
+          await prisma.folder.update({
+            where: { id: folderId },
+            data: { 
+              status: 'completed',
+              processedImages: currentProgress.totalImages
+            }
+          })
+        }
+      }
 
+      // Update database to mark image as failed
       await prisma.image.update({
         where: { id: imageId },
-        data: {
-          status: "failed",
-          error: error instanceof Error ? error.message : "Unknown error",
-        },
+        data: { 
+          status: 'failed',
+          error: errorMessage.substring(0, 500) // Limit error message length
+        }
       })
 
-      // Still update folder progress even on failure
-      await updateFolderProgress(folderId)
-
-      throw error
+      throw error // Re-throw to mark job as failed
     }
   },
   {
