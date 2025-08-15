@@ -10,6 +10,12 @@ Add folders via the web interface
 Delete folders safely:
 ```npm run folder:delete <folderId>```
 
+
+safe delete
+```npx tsx scripts/safe-delete.ts DELETE ALL```
+```npx tsx scripts/clear-all-queues.ts```
+
+
 run locally with
 ```
 # Start everything (dev server + workers)
