@@ -5,7 +5,8 @@ module.exports = {
       script: 'npm',
       args: 'run workers',
       cwd: './',
-      instances: 1,
+      instances: 2, // Increased from 1 to 2 for better scaling
+      exec_mode: 'cluster', // Use cluster mode for multiple instances
       autorestart: true,
       watch: false,
       max_memory_restart: '1G',
@@ -19,6 +20,11 @@ module.exports = {
       out_file: './logs/workers-out.log',
       log_file: './logs/workers-combined.log',
       time: true,
+      // Performance optimization settings
+      max_restarts: 10,
+      min_uptime: '10s',
+      // Load balancing
+      instance_var: 'INSTANCE_ID',
     },
   ],
 } 
