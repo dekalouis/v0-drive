@@ -22,16 +22,76 @@ connection.on("ready", () => {
   console.log("✅ Worker Redis ready for operations")
 })
 
-// Folder processing worker
+// Progress tracking for folders
+const folderProgress = new Map<string, { startTime: number; totalImages: number; processedImages: number }>()
+
+// Export progress tracking for external monitoring
+export function getFolderProgress() {
+  const progress = Array.from(folderProgress.entries()).map(([folderId, data]) => {
+    const elapsedTime = Date.now() - data.startTime
+    const imagesPerMinute = data.processedImages > 0 ? (data.processedImages / (elapsedTime / 60000)) : 0
+    const avgTimePerImage = data.processedImages > 0 ? elapsedTime / data.processedImages : 0
+    const remainingImages = data.totalImages - data.processedImages
+    const estimatedTimeRemaining = remainingImages * avgTimePerImage
+    const progressPercent = Math.round((data.processedImages / data.totalImages) * 100)
+
+    return {
+      folderId,
+      totalImages: data.totalImages,
+      processedImages: data.processedImages,
+      progressPercent,
+      elapsedTime: Math.round(elapsedTime / 1000),
+      imagesPerMinute: Math.round(imagesPerMinute),
+      avgTimePerImage: Math.round(avgTimePerImage),
+      estimatedTimeRemaining: Math.round(estimatedTimeRemaining / 1000),
+      startTime: new Date(data.startTime).toISOString(),
+    }
+  })
+
+  return progress
+}
+
+// Get overall processing statistics
+export async function getProcessingStats() {
+  const progress = getFolderProgress()
+  
+  // Get queue statistics
+  const { getQueueStats } = await import("@/lib/queue")
+  const queueStats = await getQueueStats()
+  
+  // Calculate overall metrics
+  const totalImages = progress.reduce((sum, p) => sum + p.totalImages, 0)
+  const totalProcessed = progress.reduce((sum, p) => sum + p.processedImages, 0)
+  const overallProgress = totalImages > 0 ? Math.round((totalProcessed / totalImages) * 100) : 0
+  
+  const avgImagesPerMinute = progress.length > 0 
+    ? progress.reduce((sum, p) => sum + p.imagesPerMinute, 0) / progress.length 
+    : 0
+
+  return {
+    folders: progress,
+    queueStats,
+    overall: {
+      totalImages,
+      totalProcessed,
+      overallProgress,
+      avgImagesPerMinute: Math.round(avgImagesPerMinute),
+      activeFolders: progress.length,
+    }
+  }
+}
+
+// Folder worker - processes folder analysis jobs
 export const folderWorker = new Worker(
   "folders",
   async (job: Job<FolderJobData>) => {
+    const startTime = Date.now()
     console.log(`🎯 Folder worker received job: ${job.id} (${job.name})`)
     console.log(`📋 Job data:`, job.data)
     
     const { folderId, googleFolderId } = job.data
 
-    console.log(`Processing folder: ${googleFolderId}`)
+    console.log(`🚀 Starting folder processing: ${googleFolderId} at ${new Date().toISOString()}`)
 
     try {
       // Update folder status to processing
@@ -53,7 +113,14 @@ export const folderWorker = new Worker(
         },
       })
 
-      console.log(`Found ${images.length} images to process for folder ${googleFolderId}`)
+      console.log(`📊 Found ${images.length} images to process for folder ${googleFolderId}`)
+
+      // Initialize progress tracking
+      folderProgress.set(folderId, {
+        startTime,
+        totalImages: images.length,
+        processedImages: 0,
+      })
 
       // Queue image captioning jobs
       const { queueImageCaptioning } = await import("@/lib/queue")
@@ -62,7 +129,9 @@ export const folderWorker = new Worker(
         await queueImageCaptioning(image.id, image.fileId, image.etag || "unknown", folderId)
       }
 
-      console.log(`Queued ${images.length} image captioning jobs for folder ${googleFolderId}`)
+      const queueTime = Date.now() - startTime
+      console.log(`✅ Queued ${images.length} image captioning jobs for folder ${googleFolderId}`)
+      console.log(`⏱️  Queue time: ${queueTime}ms`)
 
       // Check if all images are already processed
       const totalImages = await prisma.image.count({
@@ -78,11 +147,12 @@ export const folderWorker = new Worker(
           where: { id: folderId },
           data: { status: "completed" },
         })
+        console.log(`🎉 Folder ${googleFolderId} already completed!`)
       }
 
-      return { success: true, queuedImages: images.length }
+      return { success: true, queuedImages: images.length, queueTime }
     } catch (error) {
-      console.error(`Folder processing failed for ${googleFolderId}:`, error)
+      console.error(`❌ Folder processing failed for ${googleFolderId}:`, error)
 
       await prisma.folder.update({
         where: { id: folderId },
@@ -94,20 +164,21 @@ export const folderWorker = new Worker(
   },
   {
     connection,
-    concurrency: 2, // Process 2 folders concurrently
+    concurrency: 5, // Keep folder workers low since they handle batches
   },
 )
 
-// Image captioning worker
+// Image worker - processes individual image captioning jobs
 export const imageWorker = new Worker(
-  "images",
+  "images", 
   async (job: Job<ImageJobData>) => {
+    const startTime = Date.now()
     console.log(`🎯 Image worker received job: ${job.id} (${job.name})`)
     console.log(`📋 Job data:`, job.data)
     
     const { imageId, fileId, etag, folderId } = job.data
 
-    console.log(`Processing image: ${fileId} (etag: ${etag})`)
+    console.log(`🚀 Starting image processing: ${fileId} (etag: ${etag}) at ${new Date().toISOString()}`)
 
     try {
       // Update image status to processing
@@ -126,18 +197,29 @@ export const imageWorker = new Worker(
         throw new Error("Image not found")
       }
 
+      console.log(`📥 Downloading image: ${image.name}`)
+
       // Rate limiting
       await geminiRateLimiter.waitIfNeeded()
 
-      // Generate caption and tags using Gemini
+      // Generate caption and tags using Gemini (includes download)
+      const captionStart = Date.now()
       const { caption, tags } = await captionImage(fileId, image.mimeType)
+      const captionTime = Date.now() - captionStart
 
-      console.log(`Generated caption for ${image.name}: ${caption.substring(0, 100)}...`)
+      console.log(`✨ Generated caption for ${image.name}: ${caption.substring(0, 100)}...`)
+      console.log(`⏱️  Caption generation time: ${captionTime}ms`)
 
       // Generate embedding for the caption
+      const embeddingStart = Date.now()
       const embedding = await generateCaptionEmbedding(caption, tags)
+      const embeddingTime = Date.now() - embeddingStart
+
+      console.log(`🧠 Generated embedding for ${image.name}`)
+      console.log(`⏱️  Embedding generation time: ${embeddingTime}ms`)
 
       // Update image with results
+      const dbUpdateStart = Date.now()
       await prisma.image.update({
         where: { id: imageId },
         data: {
@@ -147,15 +229,31 @@ export const imageWorker = new Worker(
           captionVec: embedding,
         },
       })
+      const dbUpdateTime = Date.now() - dbUpdateStart
 
       // Update folder progress
       await updateFolderProgress(folderId)
 
-      console.log(`Completed processing image: ${fileId}`)
+      const totalTime = Date.now() - startTime
+      console.log(`✅ Completed processing image: ${fileId}`)
+      console.log(`📊 Processing breakdown for ${image.name}:`)
+      console.log(`   - Caption generation: ${captionTime}ms`)
+      console.log(`   - Embedding generation: ${embeddingTime}ms`)
+      console.log(`   - Database update: ${dbUpdateTime}ms`)
+      console.log(`   - Total processing time: ${totalTime}ms`)
 
-      return { success: true, imageId, fileId, caption: caption.substring(0, 100) }
+      return { 
+        success: true, 
+        imageId, 
+        fileId, 
+        caption: caption.substring(0, 100),
+        processingTime: totalTime,
+        captionTime,
+        embeddingTime,
+        dbUpdateTime
+      }
     } catch (error) {
-      console.error(`Image processing failed for ${fileId}:`, error)
+      console.error(`❌ Image processing failed for ${fileId}:`, error)
 
       await prisma.image.update({
         where: { id: imageId },
@@ -173,7 +271,7 @@ export const imageWorker = new Worker(
   },
   {
     connection,
-    concurrency: 2, // Reduced concurrency for AI processing
+    concurrency: 30, // Optimal balance: 30 concurrent * 200 req/min = 6000 req/min (50% of quota)
   },
 )
 
@@ -198,7 +296,30 @@ async function updateFolderProgress(folderId: string) {
     },
   })
 
-  console.log(`Updated folder progress: ${processedImages}/${totalImages} (${status})`)
+  // Get progress tracking data
+  const progress = folderProgress.get(folderId)
+  if (progress) {
+    const elapsedTime = Date.now() - progress.startTime
+    const remainingImages = totalImages - processedImages
+    const avgTimePerImage = processedImages > 0 ? elapsedTime / processedImages : 0
+    const estimatedTimeRemaining = remainingImages * avgTimePerImage
+    const imagesPerMinute = processedImages > 0 ? (processedImages / (elapsedTime / 60000)) : 0
+
+    console.log(`📈 Folder Progress Update:`)
+    console.log(`   - Progress: ${processedImages}/${totalImages} images (${Math.round((processedImages/totalImages)*100)}%)`)
+    console.log(`   - Status: ${status}`)
+    console.log(`   - Elapsed time: ${Math.round(elapsedTime/1000)}s`)
+    console.log(`   - Processing speed: ${Math.round(imagesPerMinute)} images/minute`)
+    console.log(`   - Average time per image: ${Math.round(avgTimePerImage)}ms`)
+    console.log(`   - Estimated time remaining: ${Math.round(estimatedTimeRemaining/1000)}s`)
+    
+    if (status === "completed") {
+      console.log(`🎉 Folder completed! Total time: ${Math.round(elapsedTime/1000)}s`)
+      folderProgress.delete(folderId) // Clean up progress tracking
+    }
+  } else {
+    console.log(`Updated folder progress: ${processedImages}/${totalImages} (${status})`)
+  }
 }
 
 // Worker event handlers

@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { getAuthenticatedDownloadUrl } from "@/lib/drive"
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,46 +13,91 @@ export async function GET(request: NextRequest) {
 
     let finalUrl = imageUrl
 
-    // If we have a fileId, construct the Google Drive URL
+    // If we have a fileId, use the authenticated Google Drive URL
     if (fileId && !imageUrl) {
-      finalUrl = `https://drive.google.com/uc?export=view&id=${fileId}`
+      finalUrl = getAuthenticatedDownloadUrl(fileId)
     }
 
     if (!finalUrl) {
       return NextResponse.json({ error: "No valid image URL" }, { status: 400 })
     }
 
-    console.log(`🖼️ Proxying image: ${finalUrl}`)
+    console.log(`🖼️ Proxying image: ${fileId || 'unknown'}`)
 
-    // Fetch the image
-    const response = await fetch(finalUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      },
-    })
+    // Fetch the image with timeout and proper headers
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
 
-    if (!response.ok) {
-      console.error(`❌ Failed to fetch image: ${response.status} ${response.statusText}`)
-      return NextResponse.json({ error: "Failed to fetch image" }, { status: response.status })
+    try {
+      const response = await fetch(finalUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        },
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        console.error(`❌ Failed to fetch image ${fileId}: ${response.status} ${response.statusText}`)
+        return NextResponse.json({ 
+          error: `Failed to fetch image: ${response.status} ${response.statusText}` 
+        }, { status: response.status })
+      }
+
+      // Check if the response is actually an image
+      const contentType = response.headers.get('content-type') || ''
+      if (!contentType.startsWith('image/')) {
+        console.error(`❌ Invalid content type for ${fileId}: ${contentType}`)
+        return NextResponse.json({ 
+          error: "The requested resource isn't a valid image",
+          contentType,
+          fileId 
+        }, { status: 400 })
+      }
+
+      // Get the image data
+      const imageBuffer = await response.arrayBuffer()
+
+      if (imageBuffer.byteLength === 0) {
+        console.error(`❌ Empty image data for ${fileId}`)
+        return NextResponse.json({ error: "Empty image data" }, { status: 400 })
+      }
+
+      console.log(`✅ Successfully proxied image ${fileId}: ${contentType} (${imageBuffer.byteLength} bytes)`)
+
+      // Return the image with proper headers
+      return new NextResponse(imageBuffer, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+          'Access-Control-Allow-Origin': '*',
+        },
+      })
+    } catch (fetchError) {
+      clearTimeout(timeoutId)
+      
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        console.error(`❌ Image fetch timeout for ${fileId}`)
+        return NextResponse.json({ error: "Image fetch timeout" }, { status: 408 })
+      }
+      
+      throw fetchError
     }
-
-    // Get the image data
-    const imageBuffer = await response.arrayBuffer()
-    const contentType = response.headers.get('content-type') || 'image/jpeg'
-
-    console.log(`✅ Successfully proxied image: ${contentType} (${imageBuffer.byteLength} bytes)`)
-
-    // Return the image with proper headers
-    return new NextResponse(imageBuffer, {
-      status: 200,
-      headers: {
-        'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
-        'Access-Control-Allow-Origin': '*',
-      },
-    })
   } catch (error) {
     console.error("❌ Image proxy error:", error)
+    
+    // Provide more specific error messages
+    if (error instanceof Error) {
+      if (error.message.includes('ETIMEDOUT')) {
+        return NextResponse.json({ error: "Image download timeout" }, { status: 408 })
+      }
+      if (error.message.includes('ENOTFOUND')) {
+        return NextResponse.json({ error: "Image not found" }, { status: 404 })
+      }
+    }
+    
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 } 

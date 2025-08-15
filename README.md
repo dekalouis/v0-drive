@@ -19,7 +19,7 @@ safe delete
 run locally with
 ```
 # Start everything (dev server + workers)
-npm run start:all
+npm run start:all (should automatically run workers)
 ```
 
 For Production
@@ -39,6 +39,22 @@ npm run workers:logs
 # Stop workers
 npm run workers:stop
 ```
+
+If issues with PM2
+# Stop all PM2 processes
+pm2 stop all
+# Delete all PM2 processes
+pm2 delete all
+# Verify everything is cleared
+pm2 status
+# Kill PM2 daemon
+pm2 kill
+# Start PM2 fresh
+pm2 start
+# Start only your current workers
+npm run workers:start
+# Check status - should only show drive-image-workers
+npm run workers:status
 
 A powerful Next.js application that allows you to search through images in public Google Drive folders using AI-powered semantic search.
 
