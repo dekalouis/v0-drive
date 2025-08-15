@@ -218,69 +218,120 @@ export default function FolderPage() {
 
   // Pagination component
   const Pagination = ({ position }: { position: 'top' | 'bottom' }) => (
-    <div className={`flex items-center justify-between ${position === 'top' ? 'mb-4' : 'mt-6'}`}>
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Show:</span>
-          <select
-            value={imagesPerPage}
-            onChange={(e) => {
-              setImagesPerPage(Number(e.target.value))
-              setCurrentPage(1)
-            }}
-            className="border rounded px-2 py-1 text-sm"
-          >
-            <option value={25}>25</option>
-            <option value={50}>50</option>
-          </select>
-          <span className="text-sm text-muted-foreground">per page</span>
-        </div>
-        
-        <div className="text-sm text-muted-foreground">
-          Showing {startIndex + 1}-{Math.min(endIndex, allImages.length)} of {allImages.length} images
+    <div className={`${position === 'top' ? 'mb-4' : 'mt-6'}`}>
+      {/* Top section: Show per page and image count */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Show:</span>
+            <select
+              value={imagesPerPage}
+              onChange={(e) => {
+                setImagesPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+            <span className="text-sm text-muted-foreground">per page</span>
+          </div>
+          
+          <div className="text-sm text-muted-foreground">
+            Showing {startIndex + 1}-{Math.min(endIndex, allImages.length)} of {allImages.length} images
+          </div>
         </div>
       </div>
 
+      {/* Bottom section: Page navigation */}
       {totalPages > 1 && (
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-            disabled={currentPage === 1}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Previous
-          </Button>
-
-          <div className="flex items-center gap-1">
-            {getPageNumbers().map((page, index) => (
-              <div key={index}>
-                {page === '...' ? (
-                  <span className="px-2 py-1 text-sm text-muted-foreground">...</span>
-                ) : (
-                  <Button
-                    variant={currentPage === page ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setCurrentPage(page as number)}
-                    className="w-8 h-8 p-0"
-                  >
-                    {page}
-                  </Button>
-                )}
-              </div>
-            ))}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-center gap-4">
+          {/* Mobile: Simple chevron buttons next to page numbers */}
+          <div className="flex sm:hidden items-center justify-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="w-8 h-8 p-0"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            
+            {/* Page numbers */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {getPageNumbers().map((page, index) => (
+                <div key={index}>
+                  {page === '...' ? (
+                    <span className="px-2 py-1 text-sm text-muted-foreground">...</span>
+                  ) : (
+                    <Button
+                      variant={currentPage === page ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCurrentPage(page as number)}
+                      className="w-8 h-8 p-0"
+                    >
+                      {page}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="w-8 h-8 p-0"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-            disabled={currentPage === totalPages}
-          >
-            Next
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+          {/* Desktop: Full Previous/Next buttons */}
+          <div className="hidden sm:flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Previous
+            </Button>
+
+            {/* Page numbers */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {getPageNumbers().map((page, index) => (
+                <div key={index}>
+                  {page === '...' ? (
+                    <span className="px-2 py-1 text-sm text-muted-foreground">...</span>
+                  ) : (
+                    <Button
+                      variant={currentPage === page ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setCurrentPage(page as number)}
+                      className="w-8 h-8 p-0"
+                    >
+                      {page}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+            >
+              Next
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -318,17 +369,17 @@ export default function FolderPage() {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
             <div>
-              <h1 className="text-3xl font-bold mb-2">Google Drive Images</h1>
-              <p className="text-muted-foreground">
+              <h1 className="text-2xl sm:text-3xl font-bold mb-2">Google Drive Images</h1>
+              <p className="text-muted-foreground text-sm sm:text-base">
                 Folder ID: {folder.folderId}
               </p>
             </div>
             <Button 
               onClick={() => window.location.href = '/'}
               variant="outline"
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 w-full sm:w-auto justify-center"
             >
               <Search className="h-4 w-4" />
               Search New Folder
@@ -338,14 +389,14 @@ export default function FolderPage() {
           {/* Status and Progress */}
           <Card className="mb-6">
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <CardTitle className="flex items-center gap-2">
                   <Badge className={getStatusColor(folder.status)}>
                     {folder.status}
                   </Badge>
                   Processing Status
                 </CardTitle>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                   <div className="text-sm text-muted-foreground">
                     {folder.processedImages} / {folder.totalImages} images
                   </div>
@@ -355,7 +406,7 @@ export default function FolderPage() {
                       disabled={retryingAll}
                       variant="outline"
                       size="sm"
-                      className="flex items-center gap-2"
+                      className="flex items-center gap-2 w-full sm:w-auto justify-center"
                     >
                       {retryingAll ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -390,7 +441,7 @@ export default function FolderPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Input
                   placeholder="e.g., 'a cat sitting on a chair' or 'landscape with mountains'"
                   value={searchQuery}
@@ -398,8 +449,9 @@ export default function FolderPage() {
                   onKeyPress={(e) => e.key === "Enter" && handleSearch()}
                   className="flex-1"
                 />
-                <Button onClick={handleSearch} disabled={searching}>
+                <Button onClick={handleSearch} disabled={searching} className="w-full sm:w-auto justify-center">
                   {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  <span className="ml-2">Search</span>
                 </Button>
               </div>
             </CardContent>

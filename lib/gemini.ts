@@ -68,9 +68,22 @@ The caption should be descriptive but concise. Tags should be 3-8 short nouns or
     const response = await result.response
     const text = response.text()
 
+    // Clean the response text to handle markdown formatting
+    let cleanedText = text.trim()
+    
+    // Remove markdown code blocks if present
+    if (cleanedText.startsWith('```json') && cleanedText.endsWith('```')) {
+      cleanedText = cleanedText.replace(/^```json\n?/, '').replace(/\n?```$/, '')
+    } else if (cleanedText.startsWith('```') && cleanedText.endsWith('```')) {
+      cleanedText = cleanedText.replace(/^```\n?/, '').replace(/\n?```$/, '')
+    }
+    
+    // Remove any leading/trailing whitespace
+    cleanedText = cleanedText.trim()
+
     // Parse JSON response
     try {
-      const parsed = JSON.parse(text)
+      const parsed = JSON.parse(cleanedText)
 
       if (!parsed.caption || !Array.isArray(parsed.tags)) {
         throw new Error("Invalid response format")
@@ -90,6 +103,8 @@ The caption should be descriptive but concise. Tags should be 3-8 short nouns or
       const fallbackTags = ["image", "content"]
 
       console.warn("Failed to parse JSON response, using fallback:", parseError)
+      console.warn("Raw response text:", text)
+      console.warn("Cleaned text:", cleanedText)
       return { caption: fallbackCaption, tags: fallbackTags }
     }
   } catch (error) {
