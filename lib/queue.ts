@@ -87,7 +87,13 @@ export async function queueFolderProcessing(folderId: string, googleFolderId: st
 }
 
 // Queue image captioning job
-export async function queueImageCaptioning(imageId: string, fileId: string, etag: string, folderId: string) {
+export async function queueImageCaptioning(
+  imageId: string, 
+  fileId: string, 
+  etag: string, 
+  folderId: string, 
+  priority: number = 0
+) {
   const jobId = `image:${fileId}:${etag}`
 
   console.log(`🚀 Queueing image captioning job: ${jobId}`)
@@ -95,10 +101,15 @@ export async function queueImageCaptioning(imageId: string, fileId: string, etag
   console.log(`   - File ID: ${fileId}`)
   console.log(`   - ETag: ${etag}`)
   console.log(`   - Folder ID: ${folderId}`)
+  console.log(`   - Priority: ${priority}`)
 
   try {
     await imageQueue.add("caption", { imageId, fileId, etag, folderId } as ImageJobData, {
       jobId, // Use fileId:etag for idempotency
+      priority, // Higher priority numbers = higher priority
+      delay: priority, // Stagger jobs based on priority
+      removeOnComplete: 50, // Keep fewer completed jobs in memory
+      removeOnFail: 25, // Keep fewer failed jobs in memory
     })
 
     console.log(`✅ Successfully queued image captioning job: ${jobId}`)

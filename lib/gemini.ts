@@ -171,5 +171,76 @@ class RateLimiter {
   }
 }
 
-// Global rate limiter: 60 requests per minute
-export const geminiRateLimiter = new RateLimiter(30, 60 * 1000)
+// Global rate limiter: 15 requests per minute for Gemini 2.0 Flash-Lite
+export const geminiRateLimiter = new RateLimiter(15, 60 * 1000)
+
+// Batch rate limiter for multiple concurrent requests
+export const batchRateLimiter = new RateLimiter(15, 60 * 1000)
+
+// Enhanced rate limiter with burst capability
+class BurstRateLimiter {
+  private requests: number[] = []
+  private readonly maxRequests: number
+  private readonly windowMs: number
+  private readonly burstSize: number
+  private readonly burstWindowMs: number
+
+  constructor(maxRequests: number, windowMs: number, burstSize: number = 5, burstWindowMs: number = 1000) {
+    this.maxRequests = maxRequests
+    this.windowMs = windowMs
+    this.burstSize = burstSize
+    this.burstWindowMs = burstWindowMs
+  }
+
+  async waitIfNeeded(): Promise<void> {
+    const now = Date.now()
+
+    // Remove old requests outside the window
+    this.requests = this.requests.filter((time) => now - time < this.windowMs)
+
+    // Check burst limit first (allows short bursts)
+    const recentRequests = this.requests.filter((time) => now - time < this.burstWindowMs)
+    
+    if (recentRequests.length >= this.burstSize) {
+      const oldestRecent = Math.min(...recentRequests)
+      const waitTime = this.burstWindowMs - (now - oldestRecent)
+      
+      if (waitTime > 0) {
+        console.log(`Burst limit reached, waiting ${waitTime}ms`)
+        await new Promise((resolve) => setTimeout(resolve, waitTime))
+      }
+    }
+
+    // Check overall rate limit
+    if (this.requests.length >= this.maxRequests) {
+      const oldestRequest = Math.min(...this.requests)
+      const waitTime = this.windowMs - (now - oldestRequest)
+
+      if (waitTime > 0) {
+        console.log(`Rate limit reached, waiting ${waitTime}ms`)
+        await new Promise((resolve) => setTimeout(resolve, waitTime))
+      }
+    }
+
+    this.requests.push(now)
+  }
+
+  // Get current usage stats
+  getUsageStats() {
+    const now = Date.now()
+    const recentRequests = this.requests.filter((time) => now - time < this.windowMs)
+    const burstRequests = this.requests.filter((time) => now - time < this.burstWindowMs)
+    
+    return {
+      totalInWindow: recentRequests.length,
+      burstInWindow: burstRequests.length,
+      maxRequests: this.maxRequests,
+      burstSize: this.burstSize,
+      windowMs: this.windowMs,
+      burstWindowMs: this.burstWindowMs
+    }
+  }
+}
+
+// Enhanced rate limiter with burst capability
+export const enhancedRateLimiter = new BurstRateLimiter(15, 60 * 1000, 5, 1000)

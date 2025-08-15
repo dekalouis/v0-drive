@@ -1,7 +1,7 @@
 import { Worker, type Job } from "bullmq"
 import IORedis from "ioredis"
 import { prisma } from "@/lib/prisma"
-import { captionImage, generateCaptionEmbedding, geminiRateLimiter } from "@/lib/gemini"
+import { captionImage, generateCaptionEmbedding, enhancedRateLimiter } from "@/lib/gemini"
 import type { FolderJobData, ImageJobData } from "@/lib/queue"
 
 // Redis connection for workers
@@ -55,12 +55,15 @@ export const folderWorker = new Worker(
 
       console.log(`Found ${images.length} images to process for folder ${googleFolderId}`)
 
-      // Queue image captioning jobs
+      // Queue image captioning jobs with priority
       const { queueImageCaptioning } = await import("@/lib/queue")
 
-      for (const image of images) {
-        await queueImageCaptioning(image.id, image.fileId, image.etag || "unknown", folderId)
-      }
+      // Queue images with staggered delays to optimize rate limiting
+      const promises = images.map((image, index) => 
+        queueImageCaptioning(image.id, image.fileId, image.etag || "unknown", folderId, index * 100)
+      )
+      
+      await Promise.all(promises)
 
       console.log(`Queued ${images.length} image captioning jobs for folder ${googleFolderId}`)
 
@@ -94,7 +97,7 @@ export const folderWorker = new Worker(
   },
   {
     connection,
-    concurrency: 2, // Process 2 folders concurrently
+    concurrency: 5, // Increased from 2 to 5 for better folder processing
   },
 )
 
@@ -126,8 +129,8 @@ export const imageWorker = new Worker(
         throw new Error("Image not found")
       }
 
-      // Rate limiting
-      await geminiRateLimiter.waitIfNeeded()
+      // Enhanced rate limiting with burst capability
+      await enhancedRateLimiter.waitIfNeeded()
 
       // Generate caption and tags using Gemini
       const { caption, tags } = await captionImage(fileId, image.mimeType)
@@ -173,7 +176,7 @@ export const imageWorker = new Worker(
   },
   {
     connection,
-    concurrency: 2, // Reduced concurrency for AI processing
+    concurrency: 8, // Increased from 2 to 8 for better parallel processing
   },
 )
 
