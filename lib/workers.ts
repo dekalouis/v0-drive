@@ -1,7 +1,7 @@
 import { Worker, type Job } from "bullmq"
 import IORedis from "ioredis"
 import { prisma } from "@/lib/prisma"
-import { captionImage, generateCaptionEmbedding, geminiRateLimiter } from "@/lib/gemini"
+import { extractImageTags, generateCaptionEmbedding, geminiRateLimiter } from "@/lib/gemini"
 import type { FolderJobData, ImageJobData } from "@/lib/queue"
 
 // Redis connection for workers
@@ -202,13 +202,14 @@ export const imageWorker = new Worker(
       // Rate limiting
       await geminiRateLimiter.waitIfNeeded()
 
-      // Generate caption and tags using Gemini (includes download)
-      const captionStart = Date.now()
-      const { caption, tags } = await captionImage(fileId, image.mimeType)
-      const captionTime = Date.now() - captionStart
+      // Generate tags and quick description using fast extraction
+      const taggingStart = Date.now()
+      const { tags, quickDescription } = await extractImageTags(fileId, image.mimeType, true) // Use thumbnails
+      const taggingTime = Date.now() - taggingStart
 
-      console.log(`✨ Generated caption for ${image.name}: ${caption.substring(0, 100)}...`)
-      console.log(`⏱️  Caption generation time: ${captionTime}ms`)
+      const caption = quickDescription || `Image with tags: ${tags.slice(0, 3).join(', ')}`
+      console.log(`🏷️  Generated tags for ${image.name}: [${tags.join(', ')}]`)
+      console.log(`⏱️  Fast tagging time: ${taggingTime}ms`)
 
       // Generate embedding for the caption
       const embeddingStart = Date.now()
@@ -237,7 +238,7 @@ export const imageWorker = new Worker(
       const totalTime = Date.now() - startTime
       console.log(`✅ Completed processing image: ${fileId}`)
       console.log(`📊 Processing breakdown for ${image.name}:`)
-      console.log(`   - Caption generation: ${captionTime}ms`)
+      console.log(`   - Fast tagging: ${taggingTime}ms`)
       console.log(`   - Embedding generation: ${embeddingTime}ms`)
       console.log(`   - Database update: ${dbUpdateTime}ms`)
       console.log(`   - Total processing time: ${totalTime}ms`)
@@ -248,25 +249,51 @@ export const imageWorker = new Worker(
         fileId, 
         caption: caption.substring(0, 100),
         processingTime: totalTime,
-        captionTime,
+        taggingTime,
         embeddingTime,
         dbUpdateTime
       }
     } catch (error) {
-      console.error(`❌ Image processing failed for ${fileId}:`, error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      console.error(`❌ Image processing failed for ${fileId}: ${errorMessage}`)
+      
+      // Update progress even for failed images so UI doesn't get stuck
+      const currentProgress = folderProgress.get(folderId)
+      if (currentProgress) {
+        currentProgress.processedImages += 1
+        folderProgress.set(folderId, currentProgress)
+        
+        console.log(`📈 Folder Progress Update (including failed):`)
+        console.log(`   - Progress: ${currentProgress.processedImages}/${currentProgress.totalImages} images (${Math.round((currentProgress.processedImages / currentProgress.totalImages) * 100)}%)`)
+        console.log(`   - Status: processing`)
+        
+        // Check if folder is complete
+        if (currentProgress.processedImages >= currentProgress.totalImages) {
+          const totalTime = Date.now() - currentProgress.startTime
+          console.log(`🎉 Folder completed! Total time: ${Math.round(totalTime / 1000)}s`)
+          folderProgress.delete(folderId)
+          
+          // Update folder status in database
+          await prisma.folder.update({
+            where: { id: folderId },
+            data: { 
+              status: 'completed',
+              processedImages: currentProgress.totalImages
+            }
+          })
+        }
+      }
 
+      // Update database to mark image as failed
       await prisma.image.update({
         where: { id: imageId },
-        data: {
-          status: "failed",
-          error: error instanceof Error ? error.message : "Unknown error",
-        },
+        data: { 
+          status: 'failed',
+          error: errorMessage.substring(0, 500) // Limit error message length
+        }
       })
 
-      // Still update folder progress even on failure
-      await updateFolderProgress(folderId)
-
-      throw error
+      throw error // Re-throw to mark job as failed
     }
   },
   {
