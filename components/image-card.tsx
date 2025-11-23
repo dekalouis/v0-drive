@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Image as ImageIcon, Loader2, RefreshCw, ExternalLink } from "lucide-react"
+import { Image as ImageIcon, Loader2, RefreshCw, ExternalLink, AlertCircle } from "lucide-react"
 import Image from 'next/image'
 
 interface ImageCardProps {
@@ -25,10 +25,19 @@ interface ImageCardProps {
 
 export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
   const [imageError, setImageError] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [isHovered, setIsHovered] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
 
   const handleImageError = () => {
+    console.error(`Image failed to load: ${image.fileId}`)
     setImageError(true)
+    setIsLoading(false)
+  }
+
+  const handleImageLoad = () => {
+    setIsLoading(false)
+    setImageError(false)
   }
 
   const handleCardClick = () => {
@@ -39,6 +48,9 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
 
   const handleRetryClick = (e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
+    setRetryCount(prev => prev + 1)
+    setImageError(false)
+    setIsLoading(true)
     onRetry(image.id)
   }
 
@@ -70,10 +82,22 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
       }
     }
     
-    return caption
+    return cleanedCaption
   }
 
   const displayCaption = cleanCaption(image.caption)
+
+  // Generate image URL - prioritize thumbnails to avoid 403 errors
+  const getImageUrl = () => {
+    // Use thumbnail first since full images are getting 403s
+    if (image.thumbnailLink) {
+      return image.thumbnailLink
+    }
+    
+    // Fallback to proxy for high-res if needed
+    const baseUrl = `/api/image-proxy?fileId=${image.fileId}`
+    return retryCount > 0 ? `${baseUrl}&retry=${retryCount}` : baseUrl
+  }
 
   return (
     <Card 
@@ -87,72 +111,80 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
       onClick={handleCardClick}
     >
       <div className="aspect-square relative">
-        {!imageError && image.fileId ? (
+        {/* Loading state */}
+        {isLoading && (
+          <div className="absolute inset-0 bg-muted flex items-center justify-center z-10">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
+        {/* Main image - prioritize thumbnails */}
+        {!imageError && (image.thumbnailLink || image.fileId) ? (
           <Image
-            src={`/api/image-proxy?fileId=${image.fileId}`}
+            src={getImageUrl()}
             alt={image.name}
             width={200}
             height={200}
             className={`w-full h-full object-cover transition-all duration-200 ${
               image.status === "failed" ? "grayscale blur-sm" : ""
-            } ${isHovered ? "brightness-110" : ""}`}
+            } ${isHovered ? "brightness-110" : ""} ${isLoading ? "opacity-0" : "opacity-100"}`}
             onError={handleImageError}
-          />
-        ) : !imageError && image.thumbnailLink ? (
-          <Image
-            src={`/api/image-proxy?url=${encodeURIComponent(image.thumbnailLink)}`}
-            alt={image.name}
-            width={200}
-            height={200}
-            className={`w-full h-full object-cover transition-all duration-200 ${
-              image.status === "failed" ? "grayscale blur-sm" : ""
-            } ${isHovered ? "brightness-110" : ""}`}
-            onError={handleImageError}
+            onLoad={handleImageLoad}
+            priority={false}
           />
         ) : (
           <div className="w-full h-full bg-muted flex items-center justify-center">
-            <ImageIcon className="h-8 w-8 text-muted-foreground" />
+            <div className="text-center">
+              <ImageIcon className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-xs text-muted-foreground">Image unavailable</p>
+              {imageError && (
+                <AlertCircle className="h-4 w-4 text-red-500 mx-auto mt-1" />
+              )}
+            </div>
           </div>
         )}
         
         {/* Status badge */}
-        <div className="absolute top-2 right-2 z-10">
-          <Badge variant="secondary" className="text-xs">
+        <div className="absolute top-2 right-2 z-20">
+          <Badge 
+            variant={image.status === "failed" ? "destructive" : "secondary"} 
+            className="text-xs"
+          >
             {image.status}
           </Badge>
         </div>
         
         {/* Hover overlay with external link icon */}
-        {isHovered && image.webViewLink && (
-          <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-20">
+        {isHovered && image.webViewLink && !imageError && (
+          <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-30">
             <div className="bg-white/90 rounded-full p-2">
               <ExternalLink className="h-5 w-5 text-black" />
             </div>
           </div>
         )}
         
-        {/* Retry button for failed images */}
-        {image.status === "failed" && (
-          <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-30">
+        {/* Retry button for failed images or image errors */}
+        {(image.status === "failed" || imageError) && (
+          <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-40">
             <Button
               onClick={handleRetryClick}
-              disabled={retryingImages.has(image.id)}
+              disabled={retryingImages.has(image.id) || isLoading}
               size="sm"
               className="bg-white/90 hover:bg-white text-black"
             >
-              {retryingImages.has(image.id) ? (
+              {retryingImages.has(image.id) || isLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              Retry
+              {imageError ? "Reload" : "Retry"}
             </Button>
           </div>
         )}
         
         {/* Similarity score badge */}
         {image.similarity && (
-          <div className="absolute bottom-2 left-2 z-10">
+          <div className="absolute bottom-2 left-2 z-20">
             <Badge variant="outline" className="text-xs bg-white/90">
               {Math.round(image.similarity * 100)}% match
             </Badge>

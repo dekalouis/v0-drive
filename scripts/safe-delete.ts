@@ -85,19 +85,56 @@ async function safeDelete(folderId?: string) {
 }
 
 async function clearAllQueues() {
-  console.log("\n�� Clearing all queue data...")
+  console.log("\n🧹 Clearing all queue data...")
   
   try {
-    // Clear folder queue
-    await folderQueue.obliterate()
-    console.log("✅ Folder queue cleared")
+    // First, remove all jobs from both queues
+    console.log("   Removing all jobs from queues...")
     
-    // Clear image queue  
-    await imageQueue.obliterate()
-    console.log("✅ Image queue cleared")
+    // Get all jobs from both queues
+    const [folderJobs, imageJobs] = await Promise.all([
+      folderQueue.getJobs(['completed', 'failed', 'delayed', 'waiting', 'active', 'paused']),
+      imageQueue.getJobs(['completed', 'failed', 'delayed', 'waiting', 'active', 'paused'])
+    ])
+    
+    console.log(`   Found ${folderJobs.length} folder jobs and ${imageJobs.length} image jobs`)
+    
+    // Remove all jobs individually
+    const removePromises = [
+      ...folderJobs.map(job => job.remove()),
+      ...imageJobs.map(job => job.remove())
+    ]
+    
+    await Promise.all(removePromises)
+    console.log("   ✅ All jobs removed")
+    
+    // Now obliterate the queues
+    console.log("   Obliterating queues...")
+    await Promise.all([
+      folderQueue.obliterate(),
+      imageQueue.obliterate()
+    ])
+    
+    console.log("✅ All queues cleared successfully")
     
   } catch (error) {
     console.error("❌ Error clearing queues:", error)
+    
+    // Fallback: try to clear individual queues
+    try {
+      console.log("🔄 Trying fallback queue clearing...")
+      
+      // Clear folder queue
+      await folderQueue.obliterate({ force: true })
+      console.log("✅ Folder queue cleared (force)")
+      
+      // Clear image queue  
+      await imageQueue.obliterate({ force: true })
+      console.log("✅ Image queue cleared (force)")
+      
+    } catch (fallbackError) {
+      console.error("💀 Fallback queue clearing also failed:", fallbackError)
+    }
   }
 }
 
