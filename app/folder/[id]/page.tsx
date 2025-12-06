@@ -25,6 +25,7 @@ interface Image {
 interface Folder {
   id: string
   folderId: string
+  name: string | null
   status: string
   totalImages: number
   processedImages: number
@@ -369,21 +370,13 @@ export default function FolderPage() {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold mb-2">Google Drive Images</h1>
-              <p className="text-muted-foreground text-sm sm:text-base">
-                Folder ID: {folder.folderId}
-              </p>
-            </div>
-            <Button 
-              onClick={() => window.location.href = '/'}
-              variant="outline"
-              className="flex items-center gap-2 w-full sm:w-auto justify-center"
-            >
-              <Search className="h-4 w-4" />
-              Search New Folder
-            </Button>
+          <div className="mb-4">
+            <h1 className="text-2xl sm:text-3xl font-bold mb-2">
+              {folder.name || "Google Drive Images"}
+            </h1>
+            <p className="text-muted-foreground text-sm sm:text-base">
+              {folder.name ? `Folder: ${folder.folderId}` : `Folder ID: ${folder.folderId}`}
+            </p>
           </div>
           
           {/* Status and Progress */}
