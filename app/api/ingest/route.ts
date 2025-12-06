@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { auth, currentUser } from "@clerk/nextjs/server"
 import { prisma } from "@/lib/prisma"
 import { validateAndListImages } from "@/lib/drive"
 import { queueFolderProcessing } from "@/lib/queue"
@@ -14,10 +15,28 @@ const getMaxImagesLimit = (): number | null => {
 
 export async function POST(request: NextRequest) {
   try {
+    const { userId: clerkUserId } = await auth()
     const { folderUrl } = await request.json()
 
     if (!folderUrl) {
       return NextResponse.json({ error: "folderUrl is required" }, { status: 400 })
+    }
+
+    // Find or create user if authenticated
+    let dbUserId: string | null = null
+    if (clerkUserId) {
+      console.log(`👤 Authenticated user: ${clerkUserId}`)
+      
+      // Get full user data from Clerk including email
+      const clerkUser = await currentUser()
+      const email = clerkUser?.emailAddresses?.[0]?.emailAddress || null
+      
+      const user = await prisma.user.upsert({
+        where: { clerkId: clerkUserId },
+        update: { email }, // Update email in case it changed
+        create: { clerkId: clerkUserId, email },
+      })
+      dbUserId = user.id
     }
 
     // Extract folder ID from URL
@@ -34,7 +53,6 @@ export async function POST(request: NextRequest) {
     console.log("🔍 Checking if folder already exists in database...")
     const existingFolder = await prisma.folder.findUnique({
       where: { folderId },
-      include: { images: true },
     })
 
     if (existingFolder) {
@@ -42,6 +60,15 @@ export async function POST(request: NextRequest) {
       console.log(`   - Database ID: ${existingFolder.id}`)
       console.log(`   - Total Images: ${existingFolder.totalImages}`)
       console.log(`   - Processed Images: ${existingFolder.processedImages}`)
+      
+      // Link folder to user if not already linked
+      if (dbUserId && !existingFolder.userId) {
+        await prisma.folder.update({
+          where: { id: existingFolder.id },
+          data: { userId: dbUserId },
+        })
+        console.log(`🔗 Linked existing folder to user`)
+      }
       
       if (existingFolder.status === "failed" || existingFolder.status === "pending") {
         console.log("🔄 Re-queueing folder processing...")
@@ -66,7 +93,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 403 })
     }
 
-    console.log(`✅ Found ${result.count} images in folder`)
+    console.log(`✅ Found ${result.count} images in folder "${result.folderName}"`)
     
     // Check against maximum images limit
     const maxImagesLimit = getMaxImagesLimit()
@@ -92,9 +119,11 @@ export async function POST(request: NextRequest) {
     const folder = await prisma.folder.create({
       data: {
         folderId,
+        name: result.folderName,
         folderUrl,
         status: "pending",
         totalImages: result.count,
+        userId: dbUserId,
       },
     })
     

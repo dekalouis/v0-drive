@@ -10,6 +10,11 @@
 - `REDIS_URL` - Redis connection string for BullMQ queues
   - Example: `redis://localhost:6379`
 
+### Authentication (Clerk)
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` - Clerk publishable key (public, starts with `pk_`)
+- `CLERK_SECRET_KEY` - Clerk secret key (private, starts with `sk_`)
+  - Get these from: https://dashboard.clerk.com
+
 ### API Keys
 - `GOOGLE_DRIVE_API_KEY` - Google Drive API key for accessing public folders
 - `GEMINI_API_KEY` - Google Gemini API key for image captioning and embeddings
@@ -30,6 +35,10 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/drive_searcher
 
 # Redis
 REDIS_URL=redis://localhost:6379
+
+# Clerk Authentication
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_your_publishable_key_here
+CLERK_SECRET_KEY=sk_test_your_secret_key_here
 
 # API Keys
 GOOGLE_DRIVE_API_KEY=your_google_drive_api_key_here
