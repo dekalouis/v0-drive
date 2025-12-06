@@ -107,7 +107,57 @@ async function downloadImage(fileId: string): Promise<Buffer> {
   return downloadWithRetry(fileId, 3)
 }
 
-// Caption an image using Gemini 2.5 Flash
+// Comprehensive structured prompt for rich image analysis
+const STRUCTURED_CAPTION_PROMPT = `You are an expert image analysis assistant optimized for semantic search. Analyze this image thoroughly and extract comprehensive metadata.
+
+## Instructions
+Examine the image carefully and provide detailed information for each category below. Be factual and specific. If a category doesn't apply, use null or empty array.
+
+## Required Output Format (JSON)
+{
+  "subjects": {
+    "people": {
+      "count": number or "none" or "many",
+      "descriptions": ["description of each person/group"],
+      "actions": ["what they are doing"],
+      "emotions": ["visible emotional states"],
+      "attire": ["clothing/uniforms descriptions"]
+    },
+    "objects": ["list of significant objects with colors/details"],
+    "animals": ["list of animals if any"],
+    "text_visible": ["any readable text, signs, logos, labels - OCR"]
+  },
+  "context": {
+    "setting": "indoor/outdoor/studio/etc",
+    "location_type": "specific location type (stadium, office, beach, etc)",
+    "time_of_day": "morning/afternoon/evening/night/unclear",
+    "weather": "if outdoor and visible",
+    "lighting": "natural/artificial/mixed, quality description"
+  },
+  "visual_style": {
+    "photography_type": "portrait/landscape/action/macro/aerial/etc",
+    "composition": "centered/rule-of-thirds/symmetrical/etc",
+    "colors": {
+      "dominant": ["main colors"],
+      "mood": "warm/cool/neutral/vibrant/muted"
+    },
+    "quality": "professional/amateur/candid/staged"
+  },
+  "summary": {
+    "main_caption": "2-3 sentence comprehensive description of the image",
+    "search_keywords": ["10-15 relevant search terms that someone might use to find this image"]
+  }
+}
+
+## Guidelines
+- Be literal and factual - describe what you SEE
+- Include colors, quantities, and spatial relationships
+- Extract ALL visible text (OCR) - signs, labels, watermarks, etc.
+- For sports/action: describe the specific activity, equipment, team colors
+- For people: note approximate age range, gender if clear, expressions
+- Keywords should include synonyms and related terms for better search matching`
+
+// Caption an image using Gemini 2.0 Flash with comprehensive analysis
 export async function captionImage(
   fileId: string,
   mimeType: string,
@@ -116,7 +166,8 @@ export async function captionImage(
   tags: string[]
 }> {
   const genAI = getGeminiClient()
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" })
+  // Use gemini-2.0-flash for better captioning quality (not lite)
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
 
   try {
     // Download the image with timing
@@ -125,20 +176,10 @@ export async function captionImage(
     const downloadTime = Date.now() - downloadStart
     console.log(`⏱️  Download time for ${fileId}: ${downloadTime}ms`)
 
-    // Prepare the prompt
-    const prompt = `You are an image captioning assistant. Analyze this image and provide a concise, literal description (2-3 sentences). Avoid speculation and brand identification unless clearly visible. 
-
-Return your response as JSON in this exact format:
-{
-  "caption": "A clear, factual description of what you see in the image",
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
-}
-
-The caption should be descriptive but concise. Tags should be 3-8 short nouns or adjectives that describe key elements, colors, objects, or concepts in the image.`
-
-    // Generate content
+    // Generate content with comprehensive prompt
+    const aiStart = Date.now()
     const result = await model.generateContent([
-      prompt,
+      STRUCTURED_CAPTION_PROMPT,
       {
         inlineData: {
           data: imageBuffer.toString("base64"),
@@ -146,6 +187,8 @@ The caption should be descriptive but concise. Tags should be 3-8 short nouns or
         },
       },
     ])
+    const aiTime = Date.now() - aiStart
+    console.log(`⏱️  AI analysis time for ${fileId}: ${aiTime}ms`)
 
     const response = await result.response
     const text = response.text()
@@ -163,31 +206,115 @@ The caption should be descriptive but concise. Tags should be 3-8 short nouns or
     // Remove any leading/trailing whitespace
     cleanedText = cleanedText.trim()
 
-    // Parse JSON response
+    // Parse JSON response and build comprehensive caption
     try {
       const parsed = JSON.parse(cleanedText)
-
-      if (!parsed.caption || !Array.isArray(parsed.tags)) {
-        throw new Error("Invalid response format")
+      
+      // Build a rich, searchable caption from structured data
+      const captionParts: string[] = []
+      
+      // Main caption
+      if (parsed.summary?.main_caption) {
+        captionParts.push(parsed.summary.main_caption)
       }
+      
+      // Add subject details
+      if (parsed.subjects) {
+        const { people, objects, animals, text_visible } = parsed.subjects
+        
+        if (people?.descriptions?.length > 0) {
+          captionParts.push(`People: ${people.descriptions.join(', ')}`)
+        }
+        if (people?.actions?.length > 0) {
+          captionParts.push(`Actions: ${people.actions.join(', ')}`)
+        }
+        if (people?.attire?.length > 0) {
+          captionParts.push(`Attire: ${people.attire.join(', ')}`)
+        }
+        if (objects?.length > 0) {
+          captionParts.push(`Objects: ${objects.join(', ')}`)
+        }
+        if (animals?.length > 0) {
+          captionParts.push(`Animals: ${animals.join(', ')}`)
+        }
+        if (text_visible?.length > 0) {
+          captionParts.push(`Visible text: ${text_visible.join(', ')}`)
+        }
+      }
+      
+      // Add context
+      if (parsed.context) {
+        const { setting, location_type, time_of_day, weather, lighting } = parsed.context
+        const contextParts = [setting, location_type, time_of_day, weather, lighting].filter(Boolean)
+        if (contextParts.length > 0) {
+          captionParts.push(`Context: ${contextParts.join(', ')}`)
+        }
+      }
+      
+      // Add visual style
+      if (parsed.visual_style) {
+        const { photography_type, colors } = parsed.visual_style
+        if (photography_type) {
+          captionParts.push(`Style: ${photography_type}`)
+        }
+        if (colors?.dominant?.length > 0) {
+          captionParts.push(`Colors: ${colors.dominant.join(', ')}`)
+        }
+      }
+      
+      // Combine into final caption (limit to 1500 chars for embedding efficiency)
+      const caption = captionParts.join('. ').substring(0, 1500)
+      
+      // Extract tags from search_keywords and other fields
+      const tags: string[] = []
+      
+      // Add search keywords
+      if (parsed.summary?.search_keywords) {
+        tags.push(...parsed.summary.search_keywords)
+      }
+      
+      // Add additional tags from structured data
+      if (parsed.subjects?.objects) tags.push(...parsed.subjects.objects.slice(0, 5))
+      if (parsed.subjects?.people?.actions) tags.push(...parsed.subjects.people.actions)
+      if (parsed.context?.setting) tags.push(parsed.context.setting)
+      if (parsed.context?.location_type) tags.push(parsed.context.location_type)
+      if (parsed.visual_style?.photography_type) tags.push(parsed.visual_style.photography_type)
+      if (parsed.visual_style?.colors?.dominant) tags.push(...parsed.visual_style.colors.dominant)
+      
+      // Clean and deduplicate tags
+      const cleanedTags = [...new Set(
+        tags
+          .filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
+          .map(tag => tag.toLowerCase().trim().replace(/\s+/g, '-'))
+          .filter(tag => tag.length > 0 && tag.length <= 30)
+      )].slice(0, 20) // Allow more tags for richer search
 
-      // Clean and validate the response
-      const caption = parsed.caption.trim().substring(0, 500) // Limit caption length
-      const tags = parsed.tags
-        .slice(0, 8) // Limit to 8 tags
-        .map((tag: string) => tag.toLowerCase().trim().replace(/\s+/g, "-"))
-        .filter((tag: string) => tag.length > 0 && tag.length <= 20)
+      console.log(`📝 Generated comprehensive caption for ${fileId}: ${caption.substring(0, 100)}...`)
+      console.log(`🏷️  Generated ${cleanedTags.length} tags for ${fileId}`)
 
-      return { caption, tags }
+      return { caption, tags: cleanedTags }
     } catch (parseError) {
-      // Fallback: extract caption from raw text
-      const fallbackCaption = text.trim().substring(0, 500)
-      const fallbackTags = ["image", "content"]
-
-      console.warn("Failed to parse JSON response, using fallback:", parseError)
-      console.warn("Raw response text:", text)
-      console.warn("Cleaned text:", cleanedText)
-      return { caption: fallbackCaption, tags: fallbackTags }
+      // Fallback: try to extract useful info from raw text
+      console.warn("Failed to parse structured JSON response, using fallback:", parseError)
+      console.warn("Raw response (first 500 chars):", text.substring(0, 500))
+      
+      // Try to extract any useful text as caption
+      const fallbackCaption = text
+        .replace(/```json\n?|\n?```/g, '')
+        .replace(/[{}\[\]"]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 500)
+      
+      // Extract potential keywords from the text
+      const wordPattern = /\b[a-zA-Z]{3,15}\b/g
+      const words = fallbackCaption.match(wordPattern) || []
+      const fallbackTags = [...new Set(words.map(w => w.toLowerCase()))].slice(0, 10)
+      
+      return { 
+        caption: fallbackCaption || "Image content", 
+        tags: fallbackTags.length > 0 ? fallbackTags : ["image", "content"] 
+      }
     }
   } catch (error) {
     console.error("Gemini captioning error:", error)
@@ -222,7 +349,7 @@ export async function generateCaptionEmbedding(caption: string, tags: string[]):
   return generateTextEmbedding(combinedText)
 }
 
-// Fast tags-only image analysis using Gemini
+// Fast tags-only image analysis using Gemini (optimized for quick processing)
 export async function extractImageTags(
   fileId: string,
   mimeType: string,
@@ -256,18 +383,19 @@ export async function extractImageTags(
       // Convert buffer to base64 for Gemini
       const base64Image = imageBuffer.toString('base64')
 
-      const prompt = `Analyze this sports image and extract 6-10 key visual tags that describe what you see. Focus on:
-- Sport type (football, soccer, rugby, etc.)
-- Actions (running, jumping, throwing, etc.) 
-- People (players, coaches, referees, etc.)
-- Equipment (ball, cleats, uniform, etc.)
-- Environment (field, outdoor, indoor, etc.)
-- Colors and notable features
+      const prompt = `Analyze this image and extract 8-12 key visual tags for search indexing. Focus on:
+
+- Main subjects (people, animals, objects)
+- Actions and activities
+- Setting and environment (indoor/outdoor, location type)
+- Colors and visual style
+- Any visible text, logos, or signs (OCR)
+- Mood and atmosphere
 
 Return ONLY a JSON object with this exact format:
 {
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6"],
-  "quickDescription": "Brief one-sentence description"
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8"],
+  "quickDescription": "Brief one-sentence description of the image"
 }`
 
       const aiStart = Date.now()
@@ -309,8 +437,8 @@ Return ONLY a JSON object with this exact format:
           .slice(0, 8)
 
         return {
-          tags: fallbackTags.length > 0 ? fallbackTags : ['sports', 'activity'],
-          quickDescription: `Sports image with activities: ${fallbackTags.slice(0, 3).join(', ')}`
+          tags: fallbackTags.length > 0 ? fallbackTags : ['image', 'content'],
+          quickDescription: `Image with content: ${fallbackTags.slice(0, 3).join(', ')}`
         }
       }
     } catch (error) {
