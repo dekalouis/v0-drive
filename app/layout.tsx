@@ -27,34 +27,38 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Check if Clerk publishable key is available
+  // Check if Clerk publishable key is available and valid
   const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const hasValidClerkKey = clerkPublishableKey && 
+    clerkPublishableKey !== 'pk_test_your_publishable_key_here' &&
+    clerkPublishableKey.startsWith('pk_');
   
-  // If no key during build, render without ClerkProvider (for build-time)
-  // At runtime, this should always be available
-  if (!clerkPublishableKey) {
+  // Always render ClerkProvider if we have a valid key, even if it might fail at runtime
+  // This ensures Clerk components can be used
+  if (hasValidClerkKey) {
     return (
-      <html lang="en">
-        <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-        >
-          <Navbar />
-          {children}
-        </body>
-      </html>
+      <ClerkProvider publishableKey={clerkPublishableKey}>
+        <html lang="en">
+          <body
+            className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+          >
+            <Navbar />
+            {children}
+          </body>
+        </html>
+      </ClerkProvider>
     );
   }
 
+  // No Clerk key - render without ClerkProvider
   return (
-    <ClerkProvider>
-      <html lang="en">
-        <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-        >
-          <Navbar />
-          {children}
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en">
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+      >
+        <Navbar />
+        {children}
+      </body>
+    </html>
   );
 }

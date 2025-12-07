@@ -2,25 +2,23 @@
 import { UrlForm } from "@/components/url-form"
 import { FolderList } from "@/components/folder-list"
 import { useRouter } from "next/navigation"
-
-// Dynamically import Clerk components to avoid build-time errors
-let SignedIn: any = null
-
-// Only try to load Clerk if we're in the browser and key is available
-if (typeof window !== 'undefined') {
-  const clerkKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
-  if (clerkKey && clerkKey !== 'pk_test_your_publishable_key_here') {
-    try {
-      const clerk = require("@clerk/nextjs")
-      SignedIn = clerk.SignedIn
-    } catch {
-      // Clerk not available, continue without auth
-    }
-  }
-}
+import { useEffect, useState } from "react"
 
 export default function HomePage() {
   const router = useRouter()
+  const [SignedIn, setSignedIn] = useState<any>(null)
+
+  // Dynamically import Clerk components client-side
+  useEffect(() => {
+    const clerkKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    if (clerkKey && clerkKey !== 'pk_test_your_publishable_key_here' && clerkKey.startsWith('pk_')) {
+      import("@clerk/nextjs").then((clerk) => {
+        setSignedIn(() => clerk.SignedIn)
+      }).catch(() => {
+        // Clerk not available, continue without auth
+      })
+    }
+  }, [])
 
   const handleSuccess = (folderId: string) => {
     router.push(`/folder/${folderId}`)
