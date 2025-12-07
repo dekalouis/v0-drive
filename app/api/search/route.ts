@@ -151,26 +151,6 @@ export async function POST(request: NextRequest) {
       console.log(`⏱️ pgvector search: ${searchTime}ms (found ${results.length} results)`)
     }
 
-    // Prepare candidates for similarity search - filter for images with embeddings
-    const candidates = images
-      .filter((img) => img.captionVec && Array.isArray(img.captionVec))
-      .map((img) => {
-        const captionVec = img.captionVec as number[]
-        return {
-          ...img,
-          vector: captionVec,
-        }
-      })
-
-    if (candidates.length === 0) {
-      return NextResponse.json({
-        results: [],
-        message: isFilenameSearch 
-          ? "No images found matching filename" 
-          : "No images with embeddings found for search",
-      })
-    }
-
     // Format results with cleaned captions
     const formattedResults = results.map((result) => ({
       id: result.id,
