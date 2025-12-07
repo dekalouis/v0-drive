@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { ensurePgvectorExtension } from "@/lib/db-init"
 import { generateTextEmbedding, normalizeTextForEmbedding } from "@/lib/gemini"
 
 // Helper function to clean captions
@@ -114,6 +115,7 @@ export async function POST(request: NextRequest) {
       searchTime = Date.now() - searchStart
       console.log(`⏱️ Filename search: ${searchTime}ms (found ${results.length} results)`)
     } else {
+      await ensurePgvectorExtension()
       // Semantic search using embeddings
       const normalizedQuery = normalizeTextForEmbedding(trimmedQuery)
       console.log(`🔍 Semantic search query: "${trimmedQuery}" -> normalized: "${normalizedQuery}"`)

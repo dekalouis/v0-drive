@@ -102,6 +102,10 @@ A powerful Next.js application that allows you to search through images in publi
 - `GOOGLE_DRIVE_API_KEY`: Google Drive API key for accessing public folders
 - `GEMINI_API_KEY`: Google AI API key for image captioning
 
+> Workers automatically run `CREATE EXTENSION IF NOT EXISTS vector` on startup.
+> Make sure your Railway/PostgreSQL plan exposes the pgvector extension so this
+> succeeds during deployments.
+
 ## Usage
 
 1. Visit `http://localhost:3000`
