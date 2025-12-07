@@ -232,3 +232,4 @@ model FolderScan {
 - [Gemini API Documentation](https://ai.google.dev/docs)
 - [pgvector GitHub](https://github.com/pgvector/pgvector)
 - [Prisma Vector Support](https://www.prisma.io/docs/orm/prisma-schema/data-model/unsupported-database-features)
+

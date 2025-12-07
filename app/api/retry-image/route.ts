@@ -19,7 +19,13 @@ export async function POST(request: NextRequest) {
       
       const image = await prisma.image.findUnique({
         where: { id: imageId },
-        include: { folder: true }
+        select: {
+          id: true,
+          fileId: true,
+          name: true,
+          mimeType: true,
+          folderId: true,
+        }
       })
 
       if (!image) {
@@ -29,16 +35,12 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Reset image status to pending
-      await prisma.image.update({
-        where: { id: imageId },
-        data: { 
-          status: "pending",
-          caption: null,
-          tags: null,
-          captionVec: { set: null }
-        }
-      })
+      // Reset image status to pending using raw SQL (captionVec is an Unsupported type)
+      await prisma.$executeRaw`
+        UPDATE images 
+        SET status = 'pending', caption = NULL, tags = NULL, "captionVec" = NULL, error = NULL
+        WHERE id = ${imageId}
+      `
 
       // Add to image processing queue
       await imageQueue.add("image", {
@@ -64,6 +66,13 @@ export async function POST(request: NextRequest) {
         where: { 
           folderId,
           status: "failed"
+        },
+        select: {
+          id: true,
+          fileId: true,
+          name: true,
+          mimeType: true,
+          folderId: true,
         }
       })
 
@@ -74,19 +83,12 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Reset all failed images to pending
-      await prisma.image.updateMany({
-        where: { 
-          folderId,
-          status: "failed"
-        },
-        data: { 
-          status: "pending",
-          caption: null,
-          tags: null,
-          captionVec: { set: null }
-        }
-      })
+      // Reset all failed images to pending using raw SQL (captionVec is an Unsupported type)
+      await prisma.$executeRaw`
+        UPDATE images 
+        SET status = 'pending', caption = NULL, tags = NULL, "captionVec" = NULL, error = NULL
+        WHERE "folderId" = ${folderId} AND status = 'failed'
+      `
 
       // Add all failed images to queue
       const jobs = failedImages.map(image => ({

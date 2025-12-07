@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { auth } from "@clerk/nextjs/server"
 import { getFreshThumbnailUrl } from "@/lib/drive"
 
 // In-memory cache for thumbnail URLs (simple TTL cache)
@@ -41,6 +42,16 @@ function setCachedThumbnailUrl(fileId: string, size: number, url: string): void 
 
 export async function GET(request: NextRequest) {
   try {
+    const { userId, getToken } = await auth()
+    
+    // Try to get Google OAuth token (optional)
+    let accessToken: string | null = null
+    try {
+      accessToken = await getToken({ template: "oauth_google" })
+    } catch (error) {
+      // Token not available - will use API key for public folders
+    }
+
     const { searchParams } = new URL(request.url)
     const fileId = searchParams.get("fileId")
     const sizeParam = searchParams.get("size")
@@ -75,10 +86,16 @@ export async function GET(request: NextRequest) {
     const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 second timeout
 
     try {
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      }
+
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`
+      }
+
       const response = await fetch(thumbnailUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
+        headers,
         signal: controller.signal,
       })
 
@@ -93,9 +110,7 @@ export async function GET(request: NextRequest) {
           if (freshUrl) {
             setCachedThumbnailUrl(fileId, size, freshUrl)
             const retryResponse = await fetch(freshUrl, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              },
+              headers,
             })
             
             if (retryResponse.ok) {
@@ -151,3 +166,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
+

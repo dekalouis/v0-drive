@@ -15,7 +15,18 @@ const getMaxImagesLimit = (): number | null => {
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId: clerkUserId } = await auth()
+    const { userId: clerkUserId, getToken } = await auth()
+    
+    // Try to get Google OAuth token (optional - will be null if user hasn't connected Google)
+    let token: string | null = null
+    try {
+      token = await getToken({ template: "oauth_google" })
+    } catch (error) {
+      // Token not available - user hasn't connected Google OAuth yet
+      // This is fine, we'll use API key for public folders
+      console.log("ℹ️ No Google OAuth token available, will use API key for public folders")
+    }
+    
     const { folderUrl } = await request.json()
 
     if (!folderUrl) {
@@ -86,9 +97,34 @@ export async function POST(request: NextRequest) {
       })
       const existingFileIds = new Set(existingImages.map(img => img.fileId))
       
-      // Find new images (in Drive but not in DB)
-      const driveFileIds = new Set(driveResult.images.map(img => img.id).filter(Boolean))
-      const newImages = driveResult.images.filter(img => img.id && !existingFileIds.has(img.id))
+      // Filter out unsupported MIME types
+      const supportedMimeTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'image/bmp',
+        'image/svg+xml'
+      ]
+      
+      const supportedDriveImages = driveResult.images.filter(img => 
+        img.mimeType && supportedMimeTypes.includes(img.mimeType)
+      )
+      
+      const unsupportedImages = driveResult.images.filter(img => 
+        img.mimeType && !supportedMimeTypes.includes(img.mimeType)
+      )
+      
+      if (unsupportedImages.length > 0) {
+        console.log(`⚠️  Skipping ${unsupportedImages.length} unsupported image(s) during sync:`)
+        unsupportedImages.forEach(img => {
+          console.log(`   - ${img.name || 'Unknown'} (${img.mimeType || 'Unknown'})`)
+        })
+      }
+      
+      // Find new images (in Drive but not in DB) - only supported types
+      const driveFileIds = new Set(supportedDriveImages.map(img => img.id).filter(Boolean))
+      const newImages = supportedDriveImages.filter(img => img.id && !existingFileIds.has(img.id))
       
       // Find deleted images (in DB but not in Drive)
       const deletedFileIds = [...existingFileIds].filter(fileId => !driveFileIds.has(fileId))
@@ -178,10 +214,10 @@ export async function POST(request: NextRequest) {
       // Queue processing if there are new images
       if (newImagesAdded > 0) {
         console.log("🚀 Queueing folder processing for new images...")
-        await queueFolderProcessing(existingFolder.id, folderId)
+        await queueFolderProcessing(existingFolder.id, folderId, token || undefined)
       } else if (existingFolder.status === "failed" || existingFolder.status === "pending") {
         console.log("🔄 Re-queueing folder processing...")
-        await queueFolderProcessing(existingFolder.id, folderId)
+        await queueFolderProcessing(existingFolder.id, folderId, token || undefined)
       }
 
       return NextResponse.json({
@@ -208,17 +244,42 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Found ${result.count} images in folder "${result.folderName}"`)
     
-    // Check against maximum images limit
+    // Filter out unsupported MIME types (should already be filtered, but double-check)
+    const supportedMimeTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/svg+xml'
+    ]
+    
+    const unsupportedImages = result.images.filter(img => 
+      img.mimeType && !supportedMimeTypes.includes(img.mimeType)
+    )
+    
+    if (unsupportedImages.length > 0) {
+      console.log(`⚠️  Skipping ${unsupportedImages.length} unsupported image(s):`)
+      unsupportedImages.forEach(img => {
+        console.log(`   - ${img.name || 'Unknown'} (${img.mimeType || 'Unknown'})`)
+      })
+    }
+    
+    const supportedImages = result.images.filter(img => 
+      !img.mimeType || supportedMimeTypes.includes(img.mimeType)
+    )
+    
+    // Check against maximum images limit (using supported images only)
     const maxImagesLimit = getMaxImagesLimit()
-    if (maxImagesLimit && result.count > maxImagesLimit) {
-      console.log(`❌ Folder exceeds maximum image limit: ${result.count} > ${maxImagesLimit}`)
+    if (maxImagesLimit && supportedImages.length > maxImagesLimit) {
+      console.log(`❌ Folder exceeds maximum image limit: ${supportedImages.length} > ${maxImagesLimit}`)
       return NextResponse.json({ 
         error: `Your folder has too many images! Make sure that the folder does not contain more than ${maxImagesLimit} images!` 
       }, { status: 400 })
     }
     
-    console.log("📋 Image details:")
-    result.images.forEach((img, index: number) => {
+    console.log(`📋 Processing ${supportedImages.length} supported images (skipped ${unsupportedImages.length} unsupported):`)
+    supportedImages.forEach((img, index: number) => {
       console.log(`   ${index + 1}. ${img.name || 'Unknown'} (${img.mimeType || 'Unknown'}) - ${img.id || 'Unknown'}`)
     })
 
@@ -227,7 +288,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No images found in the folder" }, { status: 400 })
     }
 
-    // Create folder record
+    // Create folder record (using supported images count)
     console.log("💾 Creating folder record in database...")
     const folder = await prisma.folder.create({
       data: {
@@ -235,16 +296,16 @@ export async function POST(request: NextRequest) {
         name: result.folderName,
         folderUrl,
         status: "pending",
-        totalImages: result.count,
+        totalImages: supportedImages.length, // Only count supported images
         userId: dbUserId,
       },
     })
     
     console.log(`✅ Created folder record with ID: ${folder.id}`)
 
-    // Create image records
+    // Create image records (only for supported MIME types)
     console.log("💾 Creating image records in database...")
-    const imageData = result.images
+    const imageData = supportedImages
       .filter((file) => file.id && file.name && file.mimeType) // Filter out files without required fields
       .map((file) => ({
         folderId: folder.id,
@@ -273,7 +334,7 @@ export async function POST(request: NextRequest) {
 
     // Queue folder processing
     console.log("🚀 Queueing folder processing job...")
-    await queueFolderProcessing(folder.id, folderId)
+    await queueFolderProcessing(folder.id, folderId, token || undefined)
     console.log("✅ Folder processing job queued successfully")
 
     return NextResponse.json({

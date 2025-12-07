@@ -1,8 +1,19 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { auth } from "@clerk/nextjs/server"
 import { getAuthenticatedDownloadUrl } from "@/lib/drive"
 
 export async function GET(request: NextRequest) {
   try {
+    const { userId, getToken } = await auth()
+    
+    // Try to get Google OAuth token (optional)
+    let accessToken: string | null = null
+    try {
+      accessToken = await getToken({ template: "oauth_google" })
+    } catch (error) {
+      // Token not available - will use API key for public folders
+    }
+
     const { searchParams } = new URL(request.url)
     const imageUrl = searchParams.get("url")
     const fileId = searchParams.get("fileId")
@@ -29,10 +40,16 @@ export async function GET(request: NextRequest) {
     const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
 
     try {
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      }
+
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`
+      }
+
       const response = await fetch(finalUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        },
+        headers,
         signal: controller.signal,
       })
 

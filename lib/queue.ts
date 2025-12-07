@@ -52,6 +52,7 @@ export const imageQueue = new Queue("images", {
 export interface FolderJobData {
   folderId: string
   googleFolderId: string
+  accessToken?: string
 }
 
 export interface ImageJobData {
@@ -59,10 +60,24 @@ export interface ImageJobData {
   fileId: string
   etag: string
   folderId: string
+  accessToken?: string
+}
+
+export interface ImageBatchJobData {
+  images: Array<{
+    imageId: string
+    fileId: string
+    etag: string
+    folderId: string
+    mimeType: string
+    name: string
+  }>
+  folderId: string
+  accessToken?: string
 }
 
 // Queue folder processing job
-export async function queueFolderProcessing(folderId: string, googleFolderId: string) {
+export async function queueFolderProcessing(folderId: string, googleFolderId: string, accessToken?: string) {
   // Include timestamp to allow re-processing after sync finds new images
   const timestamp = Date.now()
   const jobId = `folder:${googleFolderId}:${timestamp}`
@@ -73,7 +88,7 @@ export async function queueFolderProcessing(folderId: string, googleFolderId: st
   console.log(`   - Timestamp: ${new Date().toISOString()}`)
 
   try {
-    await folderQueue.add("process", { folderId, googleFolderId } as FolderJobData, {
+    await folderQueue.add("process", { folderId, googleFolderId, accessToken } as FolderJobData, {
       jobId,
     })
 
@@ -88,29 +103,37 @@ export async function queueFolderProcessing(folderId: string, googleFolderId: st
   }
 }
 
-// Queue image captioning job
-export async function queueImageCaptioning(imageId: string, fileId: string, etag: string, folderId: string) {
+// Queue image captioning job (legacy single)
+export async function queueImageCaptioning(imageId: string, fileId: string, etag: string, folderId: string, accessToken?: string) {
   const jobId = `image:${fileId}:${etag}`
 
   console.log(`🚀 Queueing image captioning job: ${jobId}`)
-  console.log(`   - Image ID: ${imageId}`)
-  console.log(`   - File ID: ${fileId}`)
-  console.log(`   - ETag: ${etag}`)
-  console.log(`   - Folder ID: ${folderId}`)
-  console.log(`   - Timestamp: ${new Date().toISOString()}`)
 
   try {
-    await imageQueue.add("caption", { imageId, fileId, etag, folderId } as ImageJobData, {
+    await imageQueue.add("caption", { imageId, fileId, etag, folderId, accessToken } as ImageJobData, {
       jobId, // Use fileId:etag for idempotency
     })
 
     console.log(`✅ Successfully queued image captioning job: ${jobId}`)
-    
-    // Log queue stats
-    const stats = await imageQueue.getJobCounts()
-    console.log(`📊 Image queue stats:`, stats)
   } catch (error) {
     console.error(`❌ Failed to queue image captioning job: ${jobId}`, error)
+    throw error
+  }
+}
+
+// Queue batch of images
+export async function queueImageBatch(data: ImageBatchJobData) {
+  const jobId = `batch:${data.folderId}:${Date.now()}:${Math.random().toString(36).substring(7)}`
+  
+  console.log(`🚀 Queueing image batch job: ${jobId} with ${data.images.length} images`)
+
+  try {
+    await imageQueue.add("batch-caption", data, {
+      jobId,
+    })
+    console.log(`✅ Successfully queued batch job: ${jobId}`)
+  } catch (error) {
+    console.error(`❌ Failed to queue batch job: ${jobId}`, error)
     throw error
   }
 }

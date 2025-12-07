@@ -99,6 +99,53 @@ export async function validateAndListImages(folderId: string) {
 }
 
 /**
+ * Get download URL for a Drive file
+ */
+export function getDownloadUrl(fileId: string): string {
+  return `https://drive.google.com/uc?export=download&id=${fileId}`
+}
+
+/**
+ * Get alternative download URL with authentication
+ */
+export function getAuthenticatedDownloadUrl(fileId: string): string {
+  return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${process.env.GOOGLE_DRIVE_API_KEY}`
+}
+
+/**
+ * Get fresh thumbnail URL for a file from Google Drive API
+ * @param fileId - The Google Drive file ID
+ * @param size - Optional thumbnail size (default 220px)
+ * @returns Fresh thumbnail URL or null if not available
+ */
+export async function getFreshThumbnailUrl(fileId: string, size: number = 220): Promise<string | null> {
+  const drive = getDriveClient()
+
+  try {
+    const response = await drive.files.get({
+      fileId,
+      fields: "thumbnailLink",
+    })
+
+    const thumbnailLink = response.data.thumbnailLink
+    if (!thumbnailLink) {
+      return null
+    }
+
+    // Modify the thumbnail size if needed (default is s220)
+    // Google Drive thumbnail URLs end with =sXXX where XXX is the size
+    if (size !== 220) {
+      return thumbnailLink.replace(/=s\d+$/, `=s${size}`)
+    }
+
+    return thumbnailLink
+  } catch (error: unknown) {
+    console.error(`Failed to get thumbnail for file ${fileId}:`, error)
+    return null
+  }
+}
+
+/**
  * Recursively list all images in a folder and its subfolders
  */
 export async function listImagesRecursively(folderId: string): Promise<{
@@ -121,9 +168,22 @@ export async function listImagesRecursively(folderId: string): Promise<{
 
     // Helper function to recursively scan folders
     async function scanFolder(currentFolderId: string, nextPageToken?: string): Promise<void> {
+      // Only process Gemini-supported image MIME types
+      // Gemini 2.5 Flash supports: JPEG, PNG, GIF, WebP, BMP, SVG
+      // Does NOT support: AVIF, HEIC, HEIF, TIFF, etc.
+      const supportedImageTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'image/bmp',
+        'image/svg+xml'
+      ]
+
       // List all files (images and folders) in current folder
+      // Filter for supported image types OR folders
       const response = await drive.files.list({
-        q: `'${currentFolderId}' in parents and trashed=false`,
+        q: `'${currentFolderId}' in parents and trashed=false and (mimeType = 'application/vnd.google-apps.folder' or ${supportedImageTypes.map(type => `mimeType='${type}'`).join(' or ')})`,
         fields: "nextPageToken,files(id,name,mimeType,thumbnailLink,webViewLink,size,md5Checksum,modifiedTime,version)",
         includeItemsFromAllDrives: true,
         supportsAllDrives: true,
@@ -134,8 +194,8 @@ export async function listImagesRecursively(folderId: string): Promise<{
       const files = response.data.files || []
       
       for (const file of files) {
-        if (file.mimeType?.startsWith("image/")) {
-          // It's an image - add to results
+        // Only add supported image types (already filtered by query, but double-check)
+        if (file.mimeType && supportedImageTypes.includes(file.mimeType)) {
           allImages.push(file)
         } else if (file.mimeType === "application/vnd.google-apps.folder" && file.id) {
           // It's a subfolder - recursively scan it
@@ -184,53 +244,6 @@ export async function listImagesRecursively(folderId: string): Promise<{
       images: [],
       count: 0,
     }
-  }
-}
-
-/**
- * Get download URL for a Drive file
- */
-export function getDownloadUrl(fileId: string): string {
-  return `https://drive.google.com/uc?export=download&id=${fileId}`
-}
-
-/**
- * Get alternative download URL with authentication
- */
-export function getAuthenticatedDownloadUrl(fileId: string): string {
-  return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${process.env.GOOGLE_DRIVE_API_KEY}`
-}
-
-/**
- * Get fresh thumbnail URL for a file from Google Drive API
- * @param fileId - The Google Drive file ID
- * @param size - Optional thumbnail size (default 220px)
- * @returns Fresh thumbnail URL or null if not available
- */
-export async function getFreshThumbnailUrl(fileId: string, size: number = 220): Promise<string | null> {
-  const drive = getDriveClient()
-
-  try {
-    const response = await drive.files.get({
-      fileId,
-      fields: "thumbnailLink",
-    })
-
-    const thumbnailLink = response.data.thumbnailLink
-    if (!thumbnailLink) {
-      return null
-    }
-
-    // Modify the thumbnail size if needed (default is s220)
-    // Google Drive thumbnail URLs end with =sXXX where XXX is the size
-    if (size !== 220) {
-      return thumbnailLink.replace(/=s\d+$/, `=s${size}`)
-    }
-
-    return thumbnailLink
-  } catch (error: unknown) {
-    console.error(`Failed to get thumbnail for file ${fileId}:`, error)
-    return null
   }
 }
 

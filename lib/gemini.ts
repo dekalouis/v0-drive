@@ -11,7 +11,7 @@ function getGeminiClient() {
 }
 
 // Download image from Google Drive with retry logic and timeout protection
-async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer> {
+async function downloadWithRetry(fileId: string, maxRetries = 3, accessToken?: string): Promise<Buffer> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`⏬ Attempt ${attempt}/${maxRetries} downloading image: ${fileId}`)
@@ -19,16 +19,24 @@ async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer
       // Rate limit Google Drive requests
       await driveRateLimiter.waitIfNeeded()
       
-      const downloadUrl = getDownloadUrl(fileId)
+      // If accessToken is provided, use authenticated download URL (always works if token valid)
+      // Otherwise use public download URL
+      const downloadUrl = accessToken ? getAuthenticatedDownloadUrl(fileId) : getDownloadUrl(fileId)
       
       // Create AbortController for timeout
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
       
+      const headers: Record<string, string> = {
+        "User-Agent": "Drive-Image-Searcher/1.0",
+      }
+
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`
+      }
+      
       const response = await fetch(downloadUrl, {
-        headers: {
-          "User-Agent": "Drive-Image-Searcher/1.0",
-        },
+        headers,
         signal: controller.signal,
       })
       
@@ -63,10 +71,16 @@ async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 30000)
           
+          const headers: Record<string, string> = {
+            "User-Agent": "Drive-Image-Searcher/1.0",
+          }
+
+          if (accessToken) {
+            headers.Authorization = `Bearer ${accessToken}`
+          }
+
           const response = await fetch(alternativeUrl, {
-            headers: {
-              "User-Agent": "Drive-Image-Searcher/1.0",
-            },
+            headers,
             signal: controller.signal,
           })
           
@@ -103,8 +117,8 @@ async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer
 }
 
 // Legacy function for backward compatibility
-async function downloadImage(fileId: string): Promise<Buffer> {
-  return downloadWithRetry(fileId, 3)
+async function downloadImage(fileId: string, accessToken?: string): Promise<Buffer> {
+  return downloadWithRetry(fileId, 3, accessToken)
 }
 
 // Optimized structured prompt for semantic search - targets 120-200 tokens output
@@ -129,6 +143,7 @@ Guidelines:
 export async function captionImage(
   fileId: string,
   mimeType: string,
+  accessToken?: string
 ): Promise<{
   caption: string
   tags: string[]
@@ -138,9 +153,10 @@ export async function captionImage(
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
 
   try {
-    // Download the image with timing
+    // Download the image (prefer thumbnail for speed)
     const downloadStart = Date.now()
-    const imageBuffer = await downloadImage(fileId)
+    // Download full image (best quality for detailed captions)
+    const imageBuffer = await downloadImage(fileId, accessToken)
     const downloadTime = Date.now() - downloadStart
     console.log(`⏱️  Download time for ${fileId}: ${downloadTime}ms`)
 
@@ -400,7 +416,13 @@ async function downloadThumbnail(fileId: string, maxRetries = 3): Promise<Buffer
       fields: "thumbnailLink"
     })
     
-    const thumbnailUrl = fileResponse.data.thumbnailLink
+    // Request a large thumbnail (1024px)
+    let thumbnailUrl = fileResponse.data.thumbnailLink
+    if (thumbnailUrl) {
+        // Modify URL to get a larger version if possible (s220 is default, change to s1024)
+        thumbnailUrl = thumbnailUrl.replace(/=s\d+/, '=s1024')
+    }
+
     if (!thumbnailUrl) {
       throw new Error("No thumbnail available, falling back to full image")
     }

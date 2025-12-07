@@ -4,11 +4,10 @@ import { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Image as ImageIcon, Loader2, RefreshCw, ExternalLink, AlertCircle } from "lucide-react"
+import { Image as ImageIcon, Loader2, RefreshCw, ExternalLink, AlertCircle, Maximize2 } from "lucide-react"
 import Image from 'next/image'
 
-interface ImageCardProps {
-  image: {
+export interface ImageData {
     id: string
     fileId: string
     name: string
@@ -19,11 +18,15 @@ interface ImageCardProps {
     tags?: string
     similarity?: number
   }
+
+interface ImageCardProps {
+  image: ImageData
   onRetry: (imageId: string) => void
   retryingImages: Set<string>
+  onSelect?: (image: ImageData) => void
 }
 
-export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
+export function ImageCard({ image, onRetry, retryingImages, onSelect }: ImageCardProps) {
   const [imageError, setImageError] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isHovered, setIsHovered] = useState(false)
@@ -41,10 +44,20 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
   }
 
   const handleCardClick = () => {
-    if (image.webViewLink) {
+    // Don't allow clicks on processing/pending images
+    if (image.status === "processing" || image.status === "pending") {
+      return
+    }
+    
+    // If onSelect is provided, open modal instead of Google Drive
+    if (onSelect) {
+      onSelect(image)
+    } else if (image.webViewLink) {
       window.open(image.webViewLink, '_blank')
     }
   }
+  
+  const isProcessing = image.status === "processing" || image.status === "pending"
 
   const handleRetryClick = (e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
@@ -95,12 +108,12 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
 
   return (
     <Card 
-      className={`overflow-hidden transition-all duration-200 cursor-pointer group ${
-        image.status === "failed" ? "opacity-60" : ""
+      className={`overflow-hidden transition-all duration-200 group ${
+        isProcessing ? "opacity-50 cursor-not-allowed" : image.status === "failed" ? "opacity-60 cursor-pointer" : "cursor-pointer"
       } ${
-        isHovered ? "scale-105 shadow-lg" : "hover:scale-102 hover:shadow-md"
+        !isProcessing && isHovered ? "scale-105 shadow-lg" : !isProcessing ? "hover:scale-102 hover:shadow-md" : ""
       }`}
-      onMouseEnter={() => setIsHovered(true)}
+      onMouseEnter={() => !isProcessing && setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onClick={handleCardClick}
     >
@@ -120,8 +133,8 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
             width={200}
             height={200}
             className={`w-full h-full object-cover transition-all duration-200 ${
-              image.status === "failed" ? "grayscale blur-sm" : ""
-            } ${isHovered ? "brightness-110" : ""} ${isLoading ? "opacity-0" : "opacity-100"}`}
+              isProcessing ? "grayscale" : image.status === "failed" ? "grayscale blur-sm" : ""
+            } ${!isProcessing && isHovered ? "brightness-110" : ""} ${isLoading ? "opacity-0" : "opacity-100"}`}
             onError={handleImageError}
             onLoad={handleImageLoad}
             priority={false}
@@ -148,11 +161,25 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
           </Badge>
         </div>
         
-        {/* Hover overlay with external link icon */}
-        {isHovered && image.webViewLink && !imageError && (
+        {/* Hover overlay with icon - only show for completed images */}
+        {isHovered && !imageError && !isProcessing && image.status !== "failed" && (
           <div className="absolute inset-0 bg-black/20 flex items-center justify-center z-30">
             <div className="bg-white/90 rounded-full p-2">
-              <ExternalLink className="h-5 w-5 text-black" />
+              {onSelect ? (
+                <Maximize2 className="h-5 w-5 text-black" />
+              ) : (
+                <ExternalLink className="h-5 w-5 text-black" />
+              )}
+            </div>
+          </div>
+        )}
+        
+        {/* Processing overlay */}
+        {isProcessing && (
+          <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-30">
+            <div className="bg-white/90 rounded-lg px-3 py-2 flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-gray-600" />
+              <span className="text-xs font-medium text-gray-700">Processing...</span>
             </div>
           </div>
         )}

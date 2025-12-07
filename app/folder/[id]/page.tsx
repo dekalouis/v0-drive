@@ -1,14 +1,16 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Search, Image as ImageIcon, Loader2, RefreshCw, ChevronLeft, ChevronRight, FolderSync } from "lucide-react"
-import { ImageCard } from "@/components/image-card"
+import { Search, Image as ImageIcon, Loader2, RefreshCw, ChevronLeft, ChevronRight, FolderSync, ExternalLink } from "lucide-react"
+import { ImageCard, type ImageData } from "@/components/image-card"
+import { Modal } from "@/components/ui/modal"
+import NextImage from "next/image"
 
 interface Image {
   id: string
@@ -45,6 +47,7 @@ export default function FolderPage() {
   const [retryingAll, setRetryingAll] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [selectedImage, setSelectedImage] = useState<ImageData | null>(null)
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -70,40 +73,62 @@ export default function FolderPage() {
     return () => clearInterval(interval)
   }, [folderId, fetchFolderData])
 
+  // Debounced search effect
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  useEffect(() => {
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+
+    // If search query is empty, clear results immediately
+    if (!searchQuery.trim()) {
+      setSearchResults([])
+      setSearching(false)
+      return
+    }
+
+    // Set loading state immediately
+    setSearching(true)
+
+    // Debounce search - wait 500ms after user stops typing
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: searchQuery, folderId }),
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          // Format results with proper typing
+          const formattedResults = data.results.map((result: { similarity: number; [key: string]: unknown }) => ({
+            ...result,
+            similarity: Math.round(result.similarity * 1000) / 1000, // Round to 3 decimal places
+          }))
+          setSearchResults(formattedResults)
+        }
+      } catch (error) {
+        console.error("Search error:", error)
+      } finally {
+        setSearching(false)
+      }
+    }, 500) // 500ms debounce delay
+
+    // Cleanup function
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current)
+      }
+    }
+  }, [searchQuery, folderId])
+
   // Reset to first page when search changes
   useEffect(() => {
     setCurrentPage(1)
   }, [searchQuery])
-
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      setSearchResults([])
-      return
-    }
-
-    setSearching(true)
-    try {
-      const response = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: searchQuery, folderId }),
-      })
-      
-      if (response.ok) {
-        const data = await response.json()
-        // Format results with proper typing
-        const formattedResults = data.results.map((result: { similarity: number; [key: string]: unknown }) => ({
-          ...result,
-          similarity: Math.round(result.similarity * 1000) / 1000, // Round to 3 decimal places
-        }))
-        setSearchResults(formattedResults)
-      }
-    } catch (error) {
-      console.error("Search error:", error)
-    } finally {
-      setSearching(false)
-    }
-  }
 
   const handleRetryImage = async (imageId: string) => {
     setRetryingImages(prev => new Set(prev).add(imageId))
@@ -451,11 +476,11 @@ export default function FolderPage() {
                         {retryingAll ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <RefreshCw className="h-4 w-4" />
-                        )}
-                        Retry All Failed ({failedImages.length})
-                      </Button>
-                    )}
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                      Retry All Failed ({failedImages.length})
+                    </Button>
+                  )}
                   </div>
                 </div>
               </div>
@@ -488,18 +513,25 @@ export default function FolderPage() {
             </CardHeader>
             <CardContent>
               <div className="flex flex-col sm:flex-row gap-2">
-                <Input
-                  placeholder="e.g., 'a cat sitting on a chair' or 'landscape with mountains'"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleSearch()}
-                  className="flex-1"
-                />
-                <Button onClick={handleSearch} disabled={searching} className="w-full sm:w-auto justify-center">
-                  {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                  <span className="ml-2">Search</span>
-                </Button>
+                <div className="relative flex-1">
+                  <Input
+                    placeholder="Search by description or filename (e.g., 'cat' or 'vacation.jpg')"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="flex-1 pr-10"
+                  />
+                  {searching && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
               </div>
+              {searchQuery && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {searching ? "Searching..." : `Showing ${searchResults.length} result${searchResults.length !== 1 ? 's' : ''}`}
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -515,6 +547,7 @@ export default function FolderPage() {
               image={image}
               onRetry={handleRetryImage}
               retryingImages={retryingImages}
+              onSelect={setSelectedImage}
             />
           ))}
         </div>
@@ -531,6 +564,75 @@ export default function FolderPage() {
           </div>
         )}
       </div>
+
+      {/* Image Detail Modal */}
+      <Modal
+        isOpen={!!selectedImage}
+        onClose={() => setSelectedImage(null)}
+        title={selectedImage?.name}
+      >
+        {selectedImage && (
+          <div className="space-y-4">
+            {/* Image */}
+            <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden">
+              <NextImage
+                src={`/api/thumbnail-proxy?fileId=${selectedImage.fileId}&size=800`}
+                alt={selectedImage.name}
+                fill
+                className="object-contain"
+                priority
+              />
+            </div>
+
+            {/* Similarity score if present */}
+            {selectedImage.similarity && (
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-sm">
+                  {Math.round(selectedImage.similarity * 100)}% match
+                </Badge>
+              </div>
+            )}
+
+            {/* Description */}
+            {selectedImage.caption && (
+              <div className="space-y-2">
+                <h3 className="font-semibold text-foreground">Description</h3>
+                <div className="text-sm text-muted-foreground whitespace-pre-wrap bg-muted/50 p-4 rounded-lg max-h-64 overflow-y-auto">
+                  {selectedImage.caption}
+                </div>
+              </div>
+            )}
+
+            {/* Tags */}
+            {selectedImage.tags && (
+              <div className="space-y-2">
+                <h3 className="font-semibold text-foreground">Tags</h3>
+                <div className="flex flex-wrap gap-2">
+                  {selectedImage.tags.split(',').map((tag, index) => (
+                    <Badge key={index} variant="outline" className="text-xs">
+                      {tag.trim()}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Open in Drive button */}
+            {selectedImage.webViewLink && (
+              <div className="pt-2">
+                <Button
+                  onClick={() => window.open(selectedImage.webViewLink, '_blank')}
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                >
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Open in Google Drive
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 } 

@@ -1,8 +1,9 @@
 import { Worker, type Job } from "bullmq"
 import IORedis from "ioredis"
 import { prisma } from "@/lib/prisma"
-import { extractImageTags, generateCaptionEmbedding, geminiRateLimiter } from "@/lib/gemini"
-import type { FolderJobData, ImageJobData } from "@/lib/queue"
+import { captionImage, generateCaptionEmbedding, geminiRateLimiter } from "@/lib/gemini"
+import type { FolderJobData, ImageJobData, ImageBatchJobData } from "@/lib/queue"
+import { queueImageBatch } from "@/lib/queue"
 
 // Redis connection for workers
 const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
@@ -89,7 +90,7 @@ export const folderWorker = new Worker(
     console.log(`🎯 Folder worker received job: ${job.id} (${job.name})`)
     console.log(`📋 Job data:`, job.data)
     
-    const { folderId, googleFolderId } = job.data
+      const { folderId, googleFolderId, accessToken } = job.data
 
     console.log(`🚀 Starting folder processing: ${googleFolderId} at ${new Date().toISOString()}`)
 
@@ -110,6 +111,8 @@ export const folderWorker = new Worker(
           id: true,
           fileId: true,
           etag: true,
+          mimeType: true,
+          name: true,
         },
       })
 
@@ -122,15 +125,32 @@ export const folderWorker = new Worker(
         processedImages: 0,
       })
 
-      // Queue image captioning jobs
-      const { queueImageCaptioning } = await import("@/lib/queue")
-
-      for (const image of images) {
-        await queueImageCaptioning(image.id, image.fileId, image.etag || "unknown", folderId)
+      // Queue image processing jobs
+      // Use batch processing for speed (5 images per batch to mirror Test project)
+      const batchSize = 5
+      let queuedBatches = 0
+      
+      for (let i = 0; i < images.length; i += batchSize) {
+        const batch = images.slice(i, i + batchSize)
+        const batchData = batch.map(img => ({
+          imageId: img.id,
+          fileId: img.fileId,
+          etag: img.etag || "unknown",
+          folderId,
+          mimeType: img.mimeType,
+          name: img.name
+        }))
+        
+        await queueImageBatch({
+          images: batchData,
+          folderId,
+          accessToken
+        })
+        queuedBatches++
       }
 
       const queueTime = Date.now() - startTime
-      console.log(`✅ Queued ${images.length} image captioning jobs for folder ${googleFolderId}`)
+      console.log(`✅ Queued ${queuedBatches} batches (${images.length} images) for folder ${googleFolderId}`)
       console.log(`⏱️  Queue time: ${queueTime}ms`)
 
       // Check if all images are already processed
@@ -150,7 +170,7 @@ export const folderWorker = new Worker(
         console.log(`🎉 Folder ${googleFolderId} already completed!`)
       }
 
-      return { success: true, queuedImages: images.length, queueTime }
+      return { success: true, queuedImages: images.length, queuedBatches, queueTime }
     } catch (error) {
       console.error(`❌ Folder processing failed for ${googleFolderId}:`, error)
 
@@ -168,137 +188,200 @@ export const folderWorker = new Worker(
   },
 )
 
-// Image worker - processes individual image captioning jobs
-export const imageWorker = new Worker(
-  "images", 
-  async (job: Job<ImageJobData>) => {
-    const startTime = Date.now()
-    console.log(`🎯 Image worker received job: ${job.id} (${job.name})`)
-    console.log(`📋 Job data:`, job.data)
+// Helper function to process a single image (used inside batch or single job)
+async function processImage(image: { imageId: string, fileId: string, etag: string, folderId: string, mimeType?: string, name?: string, accessToken?: string }) {
+  const { imageId, fileId, etag, folderId, accessToken } = image
+  const startTime = Date.now()
+  
+  console.log(`🚀 Starting image processing: ${fileId} (etag: ${etag})`)
+
+  try {
+    // Update image status to processing (skip if batch, as it adds overhead, but safer for tracking)
+    await prisma.image.update({
+      where: { id: imageId },
+      data: { status: "processing" },
+    })
+
+    // Get image details if not provided
+    let mimeType = image.mimeType
+    let name = image.name
     
-    const { imageId, fileId, etag, folderId } = job.data
-
-    console.log(`🚀 Starting image processing: ${fileId} (etag: ${etag}) at ${new Date().toISOString()}`)
-
-    try {
-      // Update image status to processing
-      await prisma.image.update({
-        where: { id: imageId },
-        data: { status: "processing" },
-      })
-
-      // Get image details
-      const image = await prisma.image.findUnique({
+    if (!mimeType || !name) {
+      const dbImage = await prisma.image.findUnique({
         where: { id: imageId },
         select: { mimeType: true, name: true },
       })
-
-      if (!image) {
-        throw new Error("Image not found")
+      if (dbImage) {
+        mimeType = dbImage.mimeType
+        name = dbImage.name
       }
+    }
 
-      console.log(`📥 Downloading image: ${image.name}`)
+    if (!mimeType || !name) {
+      throw new Error("Image not found or details missing")
+    }
 
-      // Rate limiting
-      await geminiRateLimiter.waitIfNeeded()
-
-      // Generate tags and quick description using fast extraction
-      const taggingStart = Date.now()
-      const { tags, quickDescription } = await extractImageTags(fileId, image.mimeType, true) // Use thumbnails
-      const taggingTime = Date.now() - taggingStart
-
-      const caption = quickDescription || `Image with tags: ${tags.slice(0, 3).join(', ')}`
-      console.log(`🏷️  Generated tags for ${image.name}: [${tags.join(', ')}]`)
-      console.log(`⏱️  Fast tagging time: ${taggingTime}ms`)
-
-      // Generate embedding for the caption
-      const embeddingStart = Date.now()
-      const embedding = await generateCaptionEmbedding(caption, tags)
-      const embeddingTime = Date.now() - embeddingStart
-
-      console.log(`🧠 Generated embedding for ${image.name}`)
-      console.log(`⏱️  Embedding generation time: ${embeddingTime}ms`)
-
-      // Update image with results
-      const dbUpdateStart = Date.now()
-      await prisma.image.update({
-        where: { id: imageId },
-        data: {
-          status: "completed",
-          caption,
-          tags: tags.join(","),
-          captionVec: embedding,
-        },
-      })
-      const dbUpdateTime = Date.now() - dbUpdateStart
-
-      // Update folder progress
-      await updateFolderProgress(folderId)
-
-      const totalTime = Date.now() - startTime
-      console.log(`✅ Completed processing image: ${fileId}`)
-      console.log(`📊 Processing breakdown for ${image.name}:`)
-      console.log(`   - Fast tagging: ${taggingTime}ms`)
-      console.log(`   - Embedding generation: ${embeddingTime}ms`)
-      console.log(`   - Database update: ${dbUpdateTime}ms`)
-      console.log(`   - Total processing time: ${totalTime}ms`)
-
-      return { 
-        success: true, 
-        imageId, 
-        fileId, 
-        caption: caption.substring(0, 100),
-        processingTime: totalTime,
-        taggingTime,
-        embeddingTime,
-        dbUpdateTime
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      console.error(`❌ Image processing failed for ${fileId}: ${errorMessage}`)
-      
-      // Update progress even for failed images so UI doesn't get stuck
-      const currentProgress = folderProgress.get(folderId)
-      if (currentProgress) {
-        currentProgress.processedImages += 1
-        folderProgress.set(folderId, currentProgress)
-        
-        console.log(`📈 Folder Progress Update (including failed):`)
-        console.log(`   - Progress: ${currentProgress.processedImages}/${currentProgress.totalImages} images (${Math.round((currentProgress.processedImages / currentProgress.totalImages) * 100)}%)`)
-        console.log(`   - Status: processing`)
-        
-        // Check if folder is complete
-        if (currentProgress.processedImages >= currentProgress.totalImages) {
-          const totalTime = Date.now() - currentProgress.startTime
-          console.log(`🎉 Folder completed! Total time: ${Math.round(totalTime / 1000)}s`)
-          folderProgress.delete(folderId)
-          
-          // Update folder status in database
-          await prisma.folder.update({
-            where: { id: folderId },
-            data: { 
-              status: 'completed',
-              processedImages: currentProgress.totalImages
-            }
-          })
-        }
-      }
-
-      // Update database to mark image as failed
+    // Safety check: Skip unsupported MIME types (shouldn't happen if filtering works, but double-check)
+    const supportedMimeTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/svg+xml'
+    ]
+    
+    if (!supportedMimeTypes.includes(mimeType)) {
+      console.log(`⚠️  Skipping unsupported MIME type: ${mimeType} for ${name}`)
       await prisma.image.update({
         where: { id: imageId },
         data: { 
-          status: 'failed',
-          error: errorMessage.substring(0, 500) // Limit error message length
-        }
+          status: "failed",
+          error: `Unsupported MIME type: ${mimeType}. Gemini only supports: ${supportedMimeTypes.join(', ')}`
+        },
       })
+      return { success: false, error: `Unsupported MIME type: ${mimeType}` }
+    }
 
-      throw error // Re-throw to mark job as failed
+    console.log(`📥 Downloading/Processing image: ${name}`)
+
+    // Rate limiting
+    await geminiRateLimiter.waitIfNeeded()
+
+    // Generate extensive caption and tags using full image analysis (or large thumbnail)
+    const captioningStart = Date.now()
+    const { caption, tags } = await captionImage(fileId, mimeType, accessToken)
+    const captioningTime = Date.now() - captioningStart
+
+    console.log(`📝 Generated extensive caption for ${name}`)
+    console.log(`🏷️  Generated ${tags.length} tags`)
+    console.log(`⏱️  Captioning time: ${captioningTime}ms`)
+
+    // Generate embedding for the caption
+    const embeddingStart = Date.now()
+    const embedding = await generateCaptionEmbedding(caption, tags)
+    const embeddingTime = Date.now() - embeddingStart
+
+    // Update image with results using raw SQL for pgvector
+    const dbUpdateStart = Date.now()
+    const vectorString = `[${embedding.join(',')}]`
+    await prisma.$executeRaw`
+      UPDATE images 
+      SET 
+        status = 'completed',
+        caption = ${caption},
+        tags = ${tags.join(",")},
+        "captionVec" = ${vectorString}::vector,
+        "updatedAt" = NOW()
+      WHERE id = ${imageId}
+    `
+    const dbUpdateTime = Date.now() - dbUpdateStart
+
+    // Update folder progress (can be done in batch later, but keeping per image for granular UI updates)
+    await updateFolderProgress(folderId)
+
+    const totalTime = Date.now() - startTime
+    console.log(`✅ Completed processing image: ${fileId} in ${totalTime}ms`)
+
+    return {
+      success: true,
+      imageId,
+      fileId,
+      caption: caption.substring(0, 100),
+      processingTime: totalTime,
+      captioningTime,
+      embeddingTime,
+      dbUpdateTime
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error(`❌ Image processing failed for ${fileId}: ${errorMessage}`)
+    
+    // Update progress even for failed images so UI doesn't get stuck
+    const currentProgress = folderProgress.get(folderId)
+    if (currentProgress) {
+      currentProgress.processedImages += 1
+      folderProgress.set(folderId, currentProgress)
+      
+      // Check if folder is complete
+      if (currentProgress.processedImages >= currentProgress.totalImages) {
+        folderProgress.delete(folderId)
+        
+        // Update folder status in database
+        await prisma.folder.update({
+          where: { id: folderId },
+          data: { 
+            status: 'completed',
+            processedImages: currentProgress.totalImages
+          }
+        })
+      }
+    }
+
+    // Update database to mark image as failed
+    await prisma.image.update({
+      where: { id: imageId },
+      data: { 
+        status: 'failed',
+        error: errorMessage.substring(0, 500)
+      }
+    })
+
+    // Return error result instead of throwing - allows batch processing to continue
+    return {
+      success: false,
+      imageId,
+      fileId,
+      error: errorMessage,
+      processingTime: Date.now() - startTime
+    }
+  }
+}
+
+// Image worker - processes both single and batch jobs
+export const imageWorker = new Worker(
+  "images", 
+  async (job: Job) => {
+    console.log(`🎯 Image worker received job: ${job.id} (${job.name})`)
+    
+    if (job.name === 'batch-caption') {
+      // Process batch of images
+      const { images, folderId, accessToken } = job.data as ImageBatchJobData
+      console.log(`📦 Processing batch of ${images.length} images for folder ${folderId}`)
+      
+      // Process all images in parallel
+      // processImage now returns results instead of throwing, so we can use Promise.all
+      const results = await Promise.all(images.map(img => processImage({ ...img, accessToken })))
+      
+      const successCount = results.filter(r => r.success === true).length
+      const failCount = results.filter(r => r.success === false).length
+      
+      console.log(`✅ Batch completed: ${successCount} successful, ${failCount} failed`)
+      
+      // Log any failures for debugging
+      if (failCount > 0) {
+        const failures = results.filter(r => r.success === false)
+        console.log(`❌ Failed images in batch:`)
+        failures.forEach(f => console.log(`   - ${f.fileId}: ${f.error || 'Unknown error'}`))
+      }
+      
+      return { success: true, processed: successCount, failed: failCount }
+      
+    } else {
+      // Process single image (legacy/retry)
+      const data = job.data as ImageJobData
+      return await processImage({
+        imageId: data.imageId,
+        fileId: data.fileId,
+        etag: data.etag,
+        folderId: data.folderId,
+        accessToken: data.accessToken
+      })
     }
   },
   {
     connection,
-    concurrency: 30, // Optimal balance: 30 concurrent * 200 req/min = 6000 req/min (50% of quota)
+    concurrency: 5, // Match batch size for balanced throughput
   },
 )
 
@@ -327,9 +410,9 @@ async function updateFolderProgress(folderId: string) {
   const progress = folderProgress.get(folderId)
   if (progress) {
     const elapsedTime = Date.now() - progress.startTime
-    const remainingImages = totalImages - processedImages
-    const avgTimePerImage = processedImages > 0 ? elapsedTime / processedImages : 0
-    const estimatedTimeRemaining = remainingImages * avgTimePerImage
+    const processedImages = await prisma.image.count({
+      where: { folderId, status: "completed" },
+    })
     const imagesPerMinute = processedImages > 0 ? (processedImages / (elapsedTime / 60000)) : 0
 
     console.log(`📈 Folder Progress Update:`)
@@ -337,8 +420,6 @@ async function updateFolderProgress(folderId: string) {
     console.log(`   - Status: ${status}`)
     console.log(`   - Elapsed time: ${Math.round(elapsedTime/1000)}s`)
     console.log(`   - Processing speed: ${Math.round(imagesPerMinute)} images/minute`)
-    console.log(`   - Average time per image: ${Math.round(avgTimePerImage)}ms`)
-    console.log(`   - Estimated time remaining: ${Math.round(estimatedTimeRemaining/1000)}s`)
     
     if (status === "completed") {
       console.log(`🎉 Folder completed! Total time: ${Math.round(elapsedTime/1000)}s`)
