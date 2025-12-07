@@ -1,6 +1,7 @@
 import { Worker, type Job } from "bullmq"
 import IORedis from "ioredis"
 import { prisma } from "@/lib/prisma"
+import { ensureCaptionVectorIndex } from "@/lib/db-init"
 import { captionImage, generateCaptionEmbedding, geminiRateLimiter } from "@/lib/gemini"
 import type { FolderJobData, ImageJobData, ImageBatchJobData } from "@/lib/queue"
 import { queueImageBatch } from "@/lib/queue"
@@ -261,6 +262,9 @@ async function processImage(image: { imageId: string, fileId: string, etag: stri
     const embeddingStart = Date.now()
     const embedding = await generateCaptionEmbedding(caption, tags)
     const embeddingTime = Date.now() - embeddingStart
+
+    // Ensure pgvector + HNSW index exist before we attempt to persist embeddings
+    await ensureCaptionVectorIndex()
 
     // Update image with results using raw SQL for pgvector
     const dbUpdateStart = Date.now()
