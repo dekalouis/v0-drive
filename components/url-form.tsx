@@ -1,13 +1,11 @@
 "use client"
 
-import type React from "react"
-
 import { useState } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, FolderOpen } from "lucide-react"
+import { FolderOpen, Loader2 } from "lucide-react"
 
 interface UrlFormProps {
   onSuccess: (folderId: string) => void
@@ -71,7 +69,7 @@ export function UrlForm({ onSuccess }: UrlFormProps) {
               className="text-sm"
             />
             <p className="text-xs text-muted-foreground">
-              Make sure the folder is shared with "Anyone with the link" (viewer access)
+              Make sure the folder is shared with &quot;Anyone with the link&quot; (viewer access)
             </p>
           </div>
 
@@ -98,7 +96,16 @@ export function UrlForm({ onSuccess }: UrlFormProps) {
             <strong>Supported formats:</strong> JPG, PNG, GIF, WebP, BMP
           </p>
           <p>
-            <strong>How it works:</strong> We'll analyze each image with AI to create searchable captions
+            <strong>How it works:</strong> We&apos;ll analyze each image with AI to create searchable captions
+          </p>
+          <p>
+            <strong>Privacy:</strong> Images are processed securely and not stored permanently
+          </p>
+          <p>
+            <strong>Note:</strong> The folder must be set to &quot;Anyone with the link&quot; (viewer) for this to work
+          </p>
+          <p>
+            <strong>Image limit:</strong> Folders with more than 200 images are not supported
           </p>
         </div>
       </CardContent>

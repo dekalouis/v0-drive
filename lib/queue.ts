@@ -68,11 +68,12 @@ export async function queueFolderProcessing(folderId: string, googleFolderId: st
   console.log(`🚀 Queueing folder processing job: ${jobId}`)
   console.log(`   - Database ID: ${folderId}`)
   console.log(`   - Google Folder ID: ${googleFolderId}`)
+  console.log(`   - Timestamp: ${new Date().toISOString()}`)
 
   try {
     await folderQueue.add("process", { folderId, googleFolderId } as FolderJobData, {
       jobId, // Use folder ID for deduplication
-      delay: 1000, // Small delay to ensure DB consistency
+      // delay: 1000, // Small delay to ensure DB consistency - REMOVED FOR TESTING
     })
 
     console.log(`✅ Successfully queued folder processing job: ${jobId}`)
@@ -95,6 +96,7 @@ export async function queueImageCaptioning(imageId: string, fileId: string, etag
   console.log(`   - File ID: ${fileId}`)
   console.log(`   - ETag: ${etag}`)
   console.log(`   - Folder ID: ${folderId}`)
+  console.log(`   - Timestamp: ${new Date().toISOString()}`)
 
   try {
     await imageQueue.add("caption", { imageId, fileId, etag, folderId } as ImageJobData, {
@@ -112,7 +114,7 @@ export async function queueImageCaptioning(imageId: string, fileId: string, etag
   }
 }
 
-// Get queue stats
+// Get queue stats with enhanced logging
 export async function getQueueStats() {
   console.log("📊 Getting queue statistics...")
   
@@ -122,6 +124,15 @@ export async function getQueueStats() {
     console.log("📊 Queue Statistics:")
     console.log(`   Folders:`, folderStats)
     console.log(`   Images:`, imageStats)
+    
+    // Calculate processing rate if we have active jobs
+    if (imageStats.active && imageStats.active > 0) {
+      console.log(`⚡ Active image processing: ${imageStats.active} jobs`)
+    }
+    
+    if (imageStats.waiting && imageStats.waiting > 0) {
+      console.log(`⏳ Waiting images: ${imageStats.waiting} jobs`)
+    }
 
     return {
       folders: folderStats,

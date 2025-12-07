@@ -1,5 +1,61 @@
 # Google Drive Image Searcher
 
+🎯 Recommended Daily Workflow
+Start workers once (they'll keep running):
+```npm run start:workers-only```
+Start dev server (in another terminal):
+```npm run dev```
+Add folders via the web interface
+```npm run workers:status```
+Delete folders safely:
+```npm run folder:delete <folderId>```
+
+
+safe delete
+```npx tsx scripts/safe-delete.ts DELETE ALL```
+```npx tsx scripts/clear-all-queues.ts```
+
+
+run locally with
+```
+# Start everything (dev server + workers)
+npm run start:all (should automatically run workers)
+```
+
+For Production
+```
+# Install PM2 globally
+npm install -g pm2
+
+# Start workers with PM2
+npm run workers:start
+
+# Check status
+npm run workers:status
+
+# View logs
+npm run workers:logs
+
+# Stop workers
+npm run workers:stop
+```
+
+If issues with PM2
+# Stop all PM2 processes
+pm2 stop all
+# Delete all PM2 processes
+pm2 delete all
+# Verify everything is cleared
+pm2 status
+# Kill PM2 daemon
+pm2 kill
+# Start PM2 fresh
+pm2 start
+# Start only your current workers
+npm run workers:start
+# Check status - should only show drive-image-workers
+npm run workers:status
+
 A powerful Next.js application that allows you to search through images in public Google Drive folders using AI-powered semantic search.
 
 ## Features

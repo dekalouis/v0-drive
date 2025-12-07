@@ -47,10 +47,12 @@ export async function validateAndListImages(folderId: string) {
 
   try {
     // First, try to get folder metadata to validate access
-    await drive.files.get({
+    const folderResponse = await drive.files.get({
       fileId: folderId,
       fields: "id,name,mimeType",
     })
+
+    const folderName = folderResponse.data.name || null
 
     // List all images in the folder
     const response = await drive.files.list({
@@ -63,24 +65,29 @@ export async function validateAndListImages(folderId: string) {
 
     return {
       success: true,
+      folderName,
       images: response.data.files || [],
       count: response.data.files?.length || 0,
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Drive API error:", error)
 
-    if (error.code === 403 || error.code === 404) {
-      return {
-        success: false,
-        error:
-          "The folder isn't publicly accessible. Please set sharing to 'Anyone with the link' (viewer) and try again.",
-        images: [],
-        count: 0,
+    if (error && typeof error === 'object' && 'code' in error) {
+      const driveError = error as { code: number }
+      if (driveError.code === 403 || driveError.code === 404) {
+        return {
+          success: false,
+          folderName: null,
+          error: "The folder isn't publicly accessible. Please set sharing to 'Anyone with the link' (viewer) and try again.",
+          images: [],
+          count: 0,
+        }
       }
     }
 
     return {
       success: false,
+      folderName: null,
       error: "Failed to access the folder. Please check the URL and try again.",
       images: [],
       count: 0,

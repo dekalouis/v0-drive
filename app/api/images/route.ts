@@ -1,6 +1,37 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 
+// Helper function to clean captions
+function cleanCaption(caption?: string): string | undefined {
+  if (!caption) return undefined
+  
+  // Handle HTML-encoded JSON strings
+  let cleanedCaption = caption
+  
+  // Decode HTML entities first
+  if (caption.includes('&quot;')) {
+    cleanedCaption = caption.replace(/&quot;/g, '"')
+  }
+  
+  // Remove markdown code blocks if present
+  if (cleanedCaption.startsWith('```json') && cleanedCaption.endsWith('```')) {
+    cleanedCaption = cleanedCaption.replace(/^```json\n/, '').replace(/\n```$/, '')
+  }
+  
+  // If caption contains JSON structure, extract just the caption text
+  if (cleanedCaption.includes('"caption"')) {
+    try {
+      const parsed = JSON.parse(cleanedCaption)
+      return parsed.caption || caption
+    } catch {
+      // If parsing fails, return as is
+      return caption
+    }
+  }
+  
+  return caption
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -16,6 +47,7 @@ export async function GET(request: NextRequest) {
       select: {
         id: true,
         folderId: true,
+        name: true,
         status: true,
         totalImages: true,
         processedImages: true,
@@ -44,9 +76,15 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "asc" },
     })
 
+    // Clean captions for all images
+    const cleanedImages = images.map(image => ({
+      ...image,
+      caption: image.caption ? cleanCaption(image.caption) : undefined
+    }))
+
     return NextResponse.json({
       ...folder,
-      images,
+      images: cleanedImages,
     })
   } catch (error) {
     console.error("Images API error:", error)
