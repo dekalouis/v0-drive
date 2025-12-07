@@ -41,6 +41,23 @@ export default function HomePage() {
     
     // Always trigger refresh of folder list (for both logged-in and non-logged-in users)
     setRefreshKey(prev => prev + 1)
+import { useEffect, useState } from "react"
+
+export default function HomePage() {
+  const router = useRouter()
+  const [SignedIn, setSignedIn] = useState<any>(null)
+
+  // Dynamically import Clerk components client-side
+  useEffect(() => {
+    const clerkKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+    if (clerkKey && clerkKey !== 'pk_test_your_publishable_key_here' && clerkKey.startsWith('pk_')) {
+      import("@clerk/nextjs").then((clerk) => {
+        setSignedIn(() => clerk.SignedIn)
+      }).catch(() => {
+        // Clerk not available, continue without auth
+      })
+    }
+  }, [])
 
     // Only redirect if folder has 100 or fewer images
     // For folders > 100 images, stay on dashboard (folder list will show it as processing)
@@ -55,6 +72,13 @@ export default function HomePage() {
         <UrlForm onSuccess={handleSuccess} />
         
         <FolderList refreshTrigger={refreshKey} />
+        {SignedIn ? (
+          <SignedIn>
+            <FolderList />
+          </SignedIn>
+        ) : (
+          <FolderList />
+        )}
       </div>
     </div>
   )
