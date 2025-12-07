@@ -80,10 +80,13 @@ export async function POST(request: NextRequest) {
     // Prepare candidates for similarity search - filter for images with embeddings
     const candidates = images
       .filter((img) => img.captionVec && Array.isArray(img.captionVec))
-      .map((img) => ({
-        ...img,
-        vector: img.captionVec as number[],
-      }))
+      .map((img) => {
+        const captionVec = img.captionVec as number[]
+        return {
+          ...img,
+          vector: captionVec,
+        }
+      })
 
     if (candidates.length === 0) {
       return NextResponse.json({
