@@ -76,6 +76,26 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "asc" },
     })
 
+    // Update folder progress from actual image counts
+    const processedImages = images.filter(img => img.status === "completed").length
+    const totalImages = images.length
+    
+    // Update status based on actual counts
+    let status = folder.status
+    if (processedImages === totalImages && totalImages > 0) {
+      status = "completed"
+    } else if (processedImages > 0 || images.some(img => img.status === "processing")) {
+      status = "processing"
+    }
+
+    // Update folder if counts changed
+    if (processedImages !== folder.processedImages || totalImages !== folder.totalImages || status !== folder.status) {
+      await prisma.folder.update({
+        where: { id: folderId },
+        data: { processedImages, totalImages, status },
+      })
+    }
+
     // Clean captions for all images
     const cleanedImages = images.map(image => ({
       ...image,
@@ -84,6 +104,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ...folder,
+      totalImages,
+      processedImages,
+      status,
       images: cleanedImages,
     })
   } catch (error) {

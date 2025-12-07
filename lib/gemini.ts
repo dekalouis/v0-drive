@@ -11,7 +11,7 @@ function getGeminiClient() {
 }
 
 // Download image from Google Drive with retry logic and timeout protection
-async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer> {
+async function downloadWithRetry(fileId: string, maxRetries = 3, accessToken?: string): Promise<Buffer> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`⏬ Attempt ${attempt}/${maxRetries} downloading image: ${fileId}`)
@@ -19,16 +19,24 @@ async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer
       // Rate limit Google Drive requests
       await driveRateLimiter.waitIfNeeded()
       
-      const downloadUrl = getDownloadUrl(fileId)
+      // If accessToken is provided, use authenticated download URL (always works if token valid)
+      // Otherwise use public download URL
+      const downloadUrl = accessToken ? getAuthenticatedDownloadUrl(fileId) : getDownloadUrl(fileId)
       
       // Create AbortController for timeout
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
       
+      const headers: Record<string, string> = {
+        "User-Agent": "Drive-Image-Searcher/1.0",
+      }
+
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`
+      }
+      
       const response = await fetch(downloadUrl, {
-        headers: {
-          "User-Agent": "Drive-Image-Searcher/1.0",
-        },
+        headers,
         signal: controller.signal,
       })
       
@@ -63,10 +71,16 @@ async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 30000)
           
+          const headers: Record<string, string> = {
+            "User-Agent": "Drive-Image-Searcher/1.0",
+          }
+
+          if (accessToken) {
+            headers.Authorization = `Bearer ${accessToken}`
+          }
+
           const response = await fetch(alternativeUrl, {
-            headers: {
-              "User-Agent": "Drive-Image-Searcher/1.0",
-            },
+            headers,
             signal: controller.signal,
           })
           
@@ -103,76 +117,46 @@ async function downloadWithRetry(fileId: string, maxRetries = 3): Promise<Buffer
 }
 
 // Legacy function for backward compatibility
-async function downloadImage(fileId: string): Promise<Buffer> {
-  return downloadWithRetry(fileId, 3)
+async function downloadImage(fileId: string, accessToken?: string): Promise<Buffer> {
+  return downloadWithRetry(fileId, 3, accessToken)
 }
 
-// Comprehensive structured prompt for rich image analysis
-const STRUCTURED_CAPTION_PROMPT = `You are an expert image analysis assistant optimized for semantic search. Analyze this image thoroughly and extract comprehensive metadata.
+// Optimized structured prompt for semantic search - targets 120-200 tokens output
+const STRUCTURED_CAPTION_PROMPT = `You are generating search-ready captions for an image dataset.
+Return structured MARKDOWN with these sections (omit section only if completely empty):
 
-## Instructions
-Examine the image carefully and provide detailed information for each category below. Be factual and specific. If a category doesn't apply, use null or empty array.
+1. **Subjects & Objects:** list every distinct person, object, brand, animal, product, or UI element. Include counts, colors, positions (e.g., "two golden retrievers sitting on a red sofa").
+2. **Actions & Interactions:** describe what each subject is doing, including gestures, emotions, gaze, and relationships.
+3. **Setting & Context:** indoor/outdoor, environment type, time of day/lighting, weather, notable background elements.
+4. **Visual Attributes:** colors, textures, materials, camera angle, depth-of-field, style (photo, illustration, screenshot, UI mock, chart, etc.).
+5. **Visible Text (OCR):** quote any readable words, signage, UI labels, packaging text exactly.
+6. **Notable Details:** rare logos, devices, clothing, accessories, body language, mood, any anomalies.
+7. **Search Keywords:** comma-separated list of 10-15 high-signal terms (nouns, verbs, styles, brands) to aid embedding.
 
-## Required Output Format (JSON)
-{
-  "subjects": {
-    "people": {
-      "count": number or "none" or "many",
-      "descriptions": ["description of each person/group"],
-      "actions": ["what they are doing"],
-      "emotions": ["visible emotional states"],
-      "attire": ["clothing/uniforms descriptions"]
-    },
-    "objects": ["list of significant objects with colors/details"],
-    "animals": ["list of animals if any"],
-    "text_visible": ["any readable text, signs, logos, labels - OCR"]
-  },
-  "context": {
-    "setting": "indoor/outdoor/studio/etc",
-    "location_type": "specific location type (stadium, office, beach, etc)",
-    "time_of_day": "morning/afternoon/evening/night/unclear",
-    "weather": "if outdoor and visible",
-    "lighting": "natural/artificial/mixed, quality description"
-  },
-  "visual_style": {
-    "photography_type": "portrait/landscape/action/macro/aerial/etc",
-    "composition": "centered/rule-of-thirds/symmetrical/etc",
-    "colors": {
-      "dominant": ["main colors"],
-      "mood": "warm/cool/neutral/vibrant/muted"
-    },
-    "quality": "professional/amateur/candid/staged"
-  },
-  "summary": {
-    "main_caption": "2-3 sentence comprehensive description of the image",
-    "search_keywords": ["10-15 relevant search terms that someone might use to find this image"]
-  }
-}
+Guidelines:
+- Be exhaustive but concise—aim for 120-200 tokens total.
+- Use neutral, descriptive language; avoid speculation.
+- When unsure, say "uncertain" rather than hallucinating.
+- Do NOT mention "section omitted" or anything outside the format above.`
 
-## Guidelines
-- Be literal and factual - describe what you SEE
-- Include colors, quantities, and spatial relationships
-- Extract ALL visible text (OCR) - signs, labels, watermarks, etc.
-- For sports/action: describe the specific activity, equipment, team colors
-- For people: note approximate age range, gender if clear, expressions
-- Keywords should include synonyms and related terms for better search matching`
-
-// Caption an image using Gemini 2.0 Flash with comprehensive analysis
+// Caption an image using Gemini 2.5 Flash with comprehensive analysis
 export async function captionImage(
   fileId: string,
   mimeType: string,
+  accessToken?: string
 ): Promise<{
   caption: string
   tags: string[]
 }> {
   const genAI = getGeminiClient()
-  // Use gemini-2.0-flash for better captioning quality (not lite)
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+  // Use gemini-2.5-flash for best captioning quality
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
 
   try {
-    // Download the image with timing
+    // Download the image (prefer thumbnail for speed)
     const downloadStart = Date.now()
-    const imageBuffer = await downloadImage(fileId)
+    // Download full image (best quality for detailed captions)
+    const imageBuffer = await downloadImage(fileId, accessToken)
     const downloadTime = Date.now() - downloadStart
     console.log(`⏱️  Download time for ${fileId}: ${downloadTime}ms`)
 
@@ -193,115 +177,60 @@ export async function captionImage(
     const response = await result.response
     const text = response.text()
 
-    // Clean the response text to handle markdown formatting
-    let cleanedText = text.trim()
-    
-    // Remove markdown code blocks if present
-    if (cleanedText.startsWith('```json') && cleanedText.endsWith('```')) {
-      cleanedText = cleanedText.replace(/^```json\n?/, '').replace(/\n?```$/, '')
-    } else if (cleanedText.startsWith('```') && cleanedText.endsWith('```')) {
-      cleanedText = cleanedText.replace(/^```\n?/, '').replace(/\n?```$/, '')
-    }
-    
-    // Remove any leading/trailing whitespace
-    cleanedText = cleanedText.trim()
-
-    // Parse JSON response and build comprehensive caption
+    // Parse markdown response and extract caption + tags
     try {
-      const parsed = JSON.parse(cleanedText)
+      const cleanedText = text.trim()
       
-      // Build a rich, searchable caption from structured data
-      const captionParts: string[] = []
-      
-      // Main caption
-      if (parsed.summary?.main_caption) {
-        captionParts.push(parsed.summary.main_caption)
-      }
-      
-      // Add subject details
-      if (parsed.subjects) {
-        const { people, objects, animals, text_visible } = parsed.subjects
-        
-        if (people?.descriptions?.length > 0) {
-          captionParts.push(`People: ${people.descriptions.join(', ')}`)
-        }
-        if (people?.actions?.length > 0) {
-          captionParts.push(`Actions: ${people.actions.join(', ')}`)
-        }
-        if (people?.attire?.length > 0) {
-          captionParts.push(`Attire: ${people.attire.join(', ')}`)
-        }
-        if (objects?.length > 0) {
-          captionParts.push(`Objects: ${objects.join(', ')}`)
-        }
-        if (animals?.length > 0) {
-          captionParts.push(`Animals: ${animals.join(', ')}`)
-        }
-        if (text_visible?.length > 0) {
-          captionParts.push(`Visible text: ${text_visible.join(', ')}`)
-        }
-      }
-      
-      // Add context
-      if (parsed.context) {
-        const { setting, location_type, time_of_day, weather, lighting } = parsed.context
-        const contextParts = [setting, location_type, time_of_day, weather, lighting].filter(Boolean)
-        if (contextParts.length > 0) {
-          captionParts.push(`Context: ${contextParts.join(', ')}`)
-        }
-      }
-      
-      // Add visual style
-      if (parsed.visual_style) {
-        const { photography_type, colors } = parsed.visual_style
-        if (photography_type) {
-          captionParts.push(`Style: ${photography_type}`)
-        }
-        if (colors?.dominant?.length > 0) {
-          captionParts.push(`Colors: ${colors.dominant.join(', ')}`)
-        }
-      }
-      
-      // Combine into final caption (limit to 1500 chars for embedding efficiency)
-      const caption = captionParts.join('. ').substring(0, 1500)
-      
-      // Extract tags from search_keywords and other fields
+      // Extract Search Keywords section for tags
       const tags: string[] = []
-      
-      // Add search keywords
-      if (parsed.summary?.search_keywords) {
-        tags.push(...parsed.summary.search_keywords)
+      const keywordsMatch = cleanedText.match(/\*\*Search Keywords:\*\*\s*([^\n*]+)/i)
+      if (keywordsMatch) {
+        const keywords = keywordsMatch[1]
+          .split(',')
+          .map(k => k.trim().toLowerCase().replace(/\s+/g, '-'))
+          .filter(k => k.length > 0 && k.length <= 30)
+        tags.push(...keywords)
       }
       
-      // Add additional tags from structured data
-      if (parsed.subjects?.objects) tags.push(...parsed.subjects.objects.slice(0, 5))
-      if (parsed.subjects?.people?.actions) tags.push(...parsed.subjects.people.actions)
-      if (parsed.context?.setting) tags.push(parsed.context.setting)
-      if (parsed.context?.location_type) tags.push(parsed.context.location_type)
-      if (parsed.visual_style?.photography_type) tags.push(parsed.visual_style.photography_type)
-      if (parsed.visual_style?.colors?.dominant) tags.push(...parsed.visual_style.colors.dominant)
+      // Also extract keywords from other sections for richer tagging
+      const subjectsMatch = cleanedText.match(/\*\*Subjects & Objects:\*\*\s*([^\n*]+)/i)
+      if (subjectsMatch) {
+        const subjects = subjectsMatch[1]
+          .split(',')
+          .slice(0, 5)
+          .map(s => s.trim().toLowerCase().replace(/\s+/g, '-'))
+          .filter(s => s.length > 0 && s.length <= 30)
+        tags.push(...subjects)
+      }
+      
+      // Build caption from the full markdown (without the Search Keywords line for cleaner display)
+      const caption = cleanedText
+        .replace(/\*\*Search Keywords:\*\*[^\n]*/gi, '') // Remove keywords line
+        .replace(/\*\*/g, '') // Remove bold markers
+        .replace(/^\d+\.\s*/gm, '') // Remove numbered list markers
+        .replace(/\n{2,}/g, ' ') // Collapse multiple newlines
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim()
+        .substring(0, 1500) // Limit for embedding efficiency
       
       // Clean and deduplicate tags
       const cleanedTags = [...new Set(
         tags
           .filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
-          .map(tag => tag.toLowerCase().trim().replace(/\s+/g, '-'))
           .filter(tag => tag.length > 0 && tag.length <= 30)
       )].slice(0, 20) // Allow more tags for richer search
 
-      console.log(`📝 Generated comprehensive caption for ${fileId}: ${caption.substring(0, 100)}...`)
+      console.log(`📝 Generated caption for ${fileId}: ${caption.substring(0, 100)}...`)
       console.log(`🏷️  Generated ${cleanedTags.length} tags for ${fileId}`)
 
       return { caption, tags: cleanedTags }
     } catch (parseError) {
-      // Fallback: try to extract useful info from raw text
-      console.warn("Failed to parse structured JSON response, using fallback:", parseError)
+      // Fallback: use raw text as caption
+      console.warn("Failed to parse markdown response, using fallback:", parseError)
       console.warn("Raw response (first 500 chars):", text.substring(0, 500))
       
-      // Try to extract any useful text as caption
       const fallbackCaption = text
-        .replace(/```json\n?|\n?```/g, '')
-        .replace(/[{}\[\]"]/g, ' ')
+        .replace(/\*\*/g, '')
         .replace(/\s+/g, ' ')
         .trim()
         .substring(0, 500)
@@ -322,13 +251,25 @@ export async function captionImage(
   }
 }
 
+// Normalize text for consistent embedding and search matching
+// This ensures case-insensitive matching and consistent whitespace handling
+export function normalizeTextForEmbedding(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
 // Generate text embedding for search
-export async function generateTextEmbedding(text: string): Promise<number[]> {
+export async function generateTextEmbedding(text: string, normalize: boolean = true): Promise<number[]> {
   const genAI = getGeminiClient()
   const model = genAI.getGenerativeModel({ model: "text-embedding-004" })
 
   try {
-    const result = await model.embedContent(text)
+    // Normalize text for consistent embedding matching
+    const processedText = normalize ? normalizeTextForEmbedding(text) : text
+    
+    const result = await model.embedContent(processedText)
     const embedding = result.embedding
 
     if (!embedding.values || embedding.values.length === 0) {
@@ -346,7 +287,8 @@ export async function generateTextEmbedding(text: string): Promise<number[]> {
 export async function generateCaptionEmbedding(caption: string, tags: string[]): Promise<number[]> {
   // Combine caption and tags for richer semantic representation
   const combinedText = `${caption} ${tags.join(" ")}`
-  return generateTextEmbedding(combinedText)
+  // Normalization is applied inside generateTextEmbedding
+  return generateTextEmbedding(combinedText, true)
 }
 
 // Fast tags-only image analysis using Gemini (optimized for quick processing)
@@ -474,7 +416,13 @@ async function downloadThumbnail(fileId: string, maxRetries = 3): Promise<Buffer
       fields: "thumbnailLink"
     })
     
-    const thumbnailUrl = fileResponse.data.thumbnailLink
+    // Request a large thumbnail (1024px)
+    let thumbnailUrl = fileResponse.data.thumbnailLink
+    if (thumbnailUrl) {
+        // Modify URL to get a larger version if possible (s220 is default, change to s1024)
+        thumbnailUrl = thumbnailUrl.replace(/=s\d+/, '=s1024')
+    }
+
     if (!thumbnailUrl) {
       throw new Error("No thumbnail available, falling back to full image")
     }
