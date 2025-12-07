@@ -1,17 +1,27 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
+import { clerkClient } from "@clerk/nextjs/server"
 import { getAuthenticatedDownloadUrl } from "@/lib/drive"
 
 export async function GET(request: NextRequest) {
   try {
-    const { userId, getToken } = await auth()
+    const { userId } = await auth()
     
-    // Try to get Google OAuth token (optional)
+    // Try to get Google OAuth token from SSO connection (optional)
     let accessToken: string | null = null
-    try {
-      accessToken = await getToken({ template: "oauth_google" })
-    } catch (error) {
-      // Token not available - will use API key for public folders
+    if (userId) {
+      try {
+        // Use Clerk's API to get OAuth token (fixes deprecation warning)
+        const client = await clerkClient()
+        const tokenResponse = await client.users.getUserOauthAccessToken(userId, 'google') // Remove 'oauth_' prefix
+        
+        if (tokenResponse && tokenResponse.data && tokenResponse.data.length > 0 && tokenResponse.data[0].token) {
+          accessToken = tokenResponse.data[0].token
+        }
+      } catch (error) {
+        // Token not available - will use API key for public folders
+        console.log("ℹ️ No Google OAuth token available for image, will use API key")
+      }
     }
 
     const { searchParams } = new URL(request.url)

@@ -1,4 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { auth } from "@clerk/nextjs/server"
+import { clerkClient } from "@clerk/nextjs/server"
 import { prisma } from "@/lib/prisma"
 import { listImagesRecursively, type DriveFile } from "@/lib/drive"
 import { queueFolderProcessing } from "@/lib/queue"
@@ -14,6 +16,27 @@ const getMaxImagesLimit = (): number | null => {
 
 export async function POST(request: NextRequest) {
   try {
+    const { userId } = await auth()
+    
+    // Try to get Google OAuth token from SSO connection (optional - will be null if user hasn't connected Google)
+    let token: string | null = null
+    if (userId) {
+      try {
+        const client = await clerkClient()
+        const tokenResponse = await client.users.getUserOauthAccessToken(userId, 'google')
+        if (tokenResponse && tokenResponse.data && tokenResponse.data.length > 0 && tokenResponse.data[0].token) {
+          token = tokenResponse.data[0].token
+          console.log("✅ Google OAuth token retrieved successfully from SSO connection")
+        } else {
+          console.log("ℹ️ No Google OAuth token available, will use API key for public folders")
+        }
+      } catch {
+        // Token not available - user hasn't connected Google OAuth yet
+        // This is fine, we'll use API key for public folders
+        console.log("ℹ️ No Google OAuth token available, will use API key for public folders")
+      }
+    }
+    
     const { folderId } = await request.json()
 
     if (!folderId) {
@@ -32,7 +55,7 @@ export async function POST(request: NextRequest) {
     console.log(`🔄 Syncing folder: ${folder.name || folder.folderId}`)
 
     // Fetch current state from Google Drive (recursively including subfolders)
-    const driveResult = await listImagesRecursively(folder.folderId)
+    const driveResult = await listImagesRecursively(folder.folderId, token || undefined)
 
     if (!driveResult.success) {
       console.log(`❌ Failed to sync folder: ${driveResult.error}`)
@@ -138,7 +161,7 @@ export async function POST(request: NextRequest) {
     // Queue processing if there are new images
     if (newImagesAdded > 0) {
       console.log("🚀 Queueing folder processing for new images...")
-      await queueFolderProcessing(folderId, folder.folderId)
+      await queueFolderProcessing(folderId, folder.folderId, token || undefined)
     }
 
     return NextResponse.json({

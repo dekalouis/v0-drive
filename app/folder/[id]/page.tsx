@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback, useRef } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,6 +36,7 @@ interface Folder {
 
 export default function FolderPage() {
   const params = useParams()
+  const router = useRouter()
   const folderId = params.id as string
   
   const [folder, setFolder] = useState<Folder | null>(null)
@@ -60,12 +61,39 @@ export default function FolderPage() {
         const data = await response.json()
         setFolder(data)
         setLoading(false)
+        
+        // Check if folder is processing/pending and has >100 images - redirect to dashboard
+        // Allow access if folder is nearly complete (90%+ or <= 10 images remaining) - more lenient
+        const remainingImages = data.totalImages - data.processedImages
+        const completionPercentage = data.totalImages > 0 
+          ? (data.processedImages / data.totalImages) * 100 
+          : 0
+        const isNearlyComplete = completionPercentage >= 90 || remainingImages <= 10
+        
+        // Completed folders can always be accessed
+        // Nearly complete folders (>90% or <=10 remaining) can also be accessed
+        if ((data.status === "processing" || data.status === "pending") && data.totalImages > 100 && !isNearlyComplete) {
+          router.push("/")
+          return
+        }
+      } else if (response.status === 404) {
+        // Folder doesn't exist - remove from localStorage and redirect to dashboard
+        console.log(`🗑️  Folder ${folderId} not found, removing from localStorage and redirecting...`)
+        if (typeof window !== 'undefined') {
+          try {
+            const { removeFolder } = await import('@/lib/local-storage')
+            removeFolder(folderId)
+          } catch (err) {
+            console.error("Error removing folder from localStorage:", err)
+          }
+        }
+        router.push("/")
       }
     } catch (error) {
       console.error("Error fetching folder data:", error)
       setLoading(false)
     }
-  }, [folderId])
+  }, [folderId, router])
 
   useEffect(() => {
     fetchFolderData()

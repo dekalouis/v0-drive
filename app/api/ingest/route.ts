@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { auth, currentUser } from "@clerk/nextjs/server"
+import { clerkClient } from "@clerk/nextjs/server"
 import { prisma } from "@/lib/prisma"
 import { listImagesRecursively, type DriveFile } from "@/lib/drive"
 import { queueFolderProcessing } from "@/lib/queue"
@@ -15,16 +16,32 @@ const getMaxImagesLimit = (): number | null => {
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId: clerkUserId, getToken } = await auth()
+    const { userId: clerkUserId } = await auth()
     
-    // Try to get Google OAuth token (optional - will be null if user hasn't connected Google)
+    // Try to get Google OAuth token from SSO connection (optional - will be null if user hasn't connected Google)
     let token: string | null = null
-    try {
-      token = await getToken({ template: "oauth_google" })
-    } catch (error) {
-      // Token not available - user hasn't connected Google OAuth yet
-      // This is fine, we'll use API key for public folders
-      console.log("ℹ️ No Google OAuth token available, will use API key for public folders")
+    if (clerkUserId) {
+      try {
+        // Try to get token from SSO connection using Clerk's API
+        // Remove 'oauth_' prefix per Clerk deprecation warning
+        const client = await clerkClient()
+        const tokenResponse = await client.users.getUserOauthAccessToken(clerkUserId, 'google')
+        
+        if (tokenResponse && tokenResponse.data && tokenResponse.data.length > 0 && tokenResponse.data[0].token) {
+          token = tokenResponse.data[0].token
+          console.log("✅ Google OAuth token retrieved successfully from SSO connection")
+        } else {
+          console.log("ℹ️ No Google OAuth token available - user may need to connect Google account via SSO")
+        }
+      } catch (error) {
+        // Token not available - user hasn't connected Google OAuth yet
+        // This is fine, we'll use API key for public folders
+        console.log("ℹ️ No Google OAuth token available, will use API key for public folders")
+        console.log("   Error:", error instanceof Error ? error.message : String(error))
+        console.log("   Note: User needs to sign in with Google SSO to access private folders")
+      }
+    } else {
+      console.log("ℹ️ User not authenticated, will use API key for public folders")
     }
     
     const { folderUrl } = await request.json()
@@ -83,7 +100,7 @@ export async function POST(request: NextRequest) {
       
       // Sync folder with Google Drive to detect new/deleted images
       console.log("🔄 Syncing folder with Google Drive...")
-      const driveResult = await listImagesRecursively(folderId)
+      const driveResult = await listImagesRecursively(folderId, token || undefined)
       
       if (!driveResult.success) {
         console.log(`❌ Failed to sync folder: ${driveResult.error}`)
@@ -221,10 +238,14 @@ export async function POST(request: NextRequest) {
       }
 
       return NextResponse.json({
-        folderId: existingFolder.id,
+        id: existingFolder.id,
+        folderId: existingFolder.folderId,
+        name: driveResult.folderName,
+        folderUrl: existingFolder.folderUrl,
         status: newStatus,
         totalImages: updatedTotalImages,
         processedImages: updatedProcessedImages,
+        createdAt: existingFolder.createdAt.toISOString(),
         newImagesAdded,
         deletedImagesRemoved,
         message: newImagesAdded > 0 || deletedImagesRemoved > 0 
@@ -235,7 +256,14 @@ export async function POST(request: NextRequest) {
 
     // Validate folder access and get images (recursively including subfolders)
     console.log("🔍 Validating folder access and listing images recursively...")
-    const result = await listImagesRecursively(folderId)
+    if (clerkUserId && token) {
+      console.log(`🔑 Using OAuth token for authenticated access (user: ${clerkUserId})`)
+    } else if (clerkUserId && !token) {
+      console.log(`⚠️  User is logged in but no OAuth token available - will try public access`)
+    } else {
+      console.log(`ℹ️  Using API key for public folder access`)
+    }
+    const result = await listImagesRecursively(folderId, token || undefined)
 
     if (!result.success) {
       console.log(`❌ Folder validation failed: ${result.error}`)
@@ -338,10 +366,14 @@ export async function POST(request: NextRequest) {
     console.log("✅ Folder processing job queued successfully")
 
     return NextResponse.json({
-      folderId: folder.id,
+      id: folder.id,
+      folderId: folder.folderId,
+      name: folder.name,
+      folderUrl: folder.folderUrl,
       status: folder.status,
       totalImages: folder.totalImages,
       processedImages: folder.processedImages,
+      createdAt: folder.createdAt.toISOString(),
     })
   } catch (error) {
     console.error("❌ Ingest API error:", error)

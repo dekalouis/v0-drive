@@ -4,7 +4,36 @@ import { google, drive_v3 } from "googleapis"
 export type DriveFile = drive_v3.Schema$File
 
 // Initialize Google Drive API client
-export function getDriveClient() {
+export function getDriveClient(oauthToken?: string) {
+  // If OAuth token is provided, use it for authenticated access (private folders)
+  if (oauthToken) {
+    // For OAuth tokens from Clerk, we can use them directly
+    // The token should already have the necessary scopes (drive.readonly or drive)
+    const oauth2Client = new google.auth.OAuth2()
+    oauth2Client.setCredentials({ 
+      access_token: oauthToken,
+      // Note: We don't need client_id/secret for token-only auth
+      // The token from Clerk should already be valid
+    })
+    
+    // Set token expiry to prevent refresh attempts (Clerk manages token lifecycle)
+    oauth2Client.on('tokens', (tokens) => {
+      if (tokens.refresh_token) {
+        // Store refresh token if provided (though Clerk usually handles this)
+        oauth2Client.setCredentials({
+          ...oauth2Client.credentials,
+          refresh_token: tokens.refresh_token,
+        })
+      }
+    })
+    
+    return google.drive({
+      version: "v3",
+      auth: oauth2Client,
+    })
+  }
+
+  // Otherwise, use API key for public folder access
   if (!process.env.GOOGLE_DRIVE_API_KEY) {
     throw new Error("GOOGLE_DRIVE_API_KEY environment variable is required")
   }
@@ -116,10 +145,21 @@ export function getAuthenticatedDownloadUrl(fileId: string): string {
  * Get fresh thumbnail URL for a file from Google Drive API
  * @param fileId - The Google Drive file ID
  * @param size - Optional thumbnail size (default 220px)
+ * @param oauthToken - Optional OAuth token for accessing private files
  * @returns Fresh thumbnail URL or null if not available
  */
-export async function getFreshThumbnailUrl(fileId: string, size: number = 220): Promise<string | null> {
-  const drive = getDriveClient()
+export async function getFreshThumbnailUrl(
+  fileId: string, 
+  size: number = 220,
+  oauthToken?: string
+): Promise<string | null> {
+  const drive = getDriveClient(oauthToken)
+  
+  if (oauthToken) {
+    console.log(`🔑 Using OAuth token to get thumbnail for file ${fileId.substring(0, 10)}...`)
+  } else {
+    console.log(`🔑 Using API key to get thumbnail for file ${fileId.substring(0, 10)}...`)
+  }
 
   try {
     const response = await drive.files.get({
@@ -140,22 +180,32 @@ export async function getFreshThumbnailUrl(fileId: string, size: number = 220): 
 
     return thumbnailLink
   } catch (error: unknown) {
-    console.error(`Failed to get thumbnail for file ${fileId}:`, error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    const errorCode = (error as any)?.code || (error as any)?.status || 'unknown'
+    console.error(`❌ Failed to get thumbnail for file ${fileId.substring(0, 10)}...: ${errorMessage} (code: ${errorCode})`)
+    if (oauthToken) {
+      console.error(`   Note: OAuth token was provided but request still failed`)
+    }
     return null
   }
 }
 
 /**
  * Recursively list all images in a folder and its subfolders
+ * @param folderId - The Google Drive folder ID
+ * @param oauthToken - Optional OAuth token for accessing private folders
  */
-export async function listImagesRecursively(folderId: string): Promise<{
+export async function listImagesRecursively(
+  folderId: string,
+  oauthToken?: string
+): Promise<{
   success: boolean
   folderName: string | null
   images: DriveFile[]
   count: number
   error?: string
 }> {
-  const drive = getDriveClient()
+  const drive = getDriveClient(oauthToken)
   const allImages: DriveFile[] = []
 
   try {
@@ -227,10 +277,18 @@ export async function listImagesRecursively(folderId: string): Promise<{
     if (error && typeof error === "object" && "code" in error) {
       const driveError = error as { code: number }
       if (driveError.code === 403 || driveError.code === 404) {
+        let errorMessage: string
+        if (oauthToken) {
+          // User is logged in with OAuth token but still can't access
+          errorMessage = "The folder isn't accessible. Please make sure you have permission to access this folder in Google Drive."
+        } else {
+          // User is logged in but doesn't have OAuth token
+          errorMessage = "This folder is private. To access private folders, you need to connect your Google account. Please check your account settings to connect Google, or make the folder public by setting it to 'Anyone with the link' (viewer)."
+        }
         return {
           success: false,
           folderName: null,
-          error: "The folder isn't publicly accessible. Please set sharing to 'Anyone with the link' (viewer) and try again.",
+          error: errorMessage,
           images: [],
           count: 0,
         }

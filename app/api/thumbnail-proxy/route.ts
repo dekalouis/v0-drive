@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
+import { clerkClient } from "@clerk/nextjs/server"
 import { getFreshThumbnailUrl } from "@/lib/drive"
+import { prisma } from "@/lib/prisma"
 
 // In-memory cache for thumbnail URLs (simple TTL cache)
 const thumbnailCache = new Map<string, { url: string; expiresAt: number }>()
@@ -42,16 +44,6 @@ function setCachedThumbnailUrl(fileId: string, size: number, url: string): void 
 
 export async function GET(request: NextRequest) {
   try {
-    const { userId, getToken } = await auth()
-    
-    // Try to get Google OAuth token (optional)
-    let accessToken: string | null = null
-    try {
-      accessToken = await getToken({ template: "oauth_google" })
-    } catch (error) {
-      // Token not available - will use API key for public folders
-    }
-
     const { searchParams } = new URL(request.url)
     const fileId = searchParams.get("fileId")
     const sizeParam = searchParams.get("size")
@@ -59,6 +51,70 @@ export async function GET(request: NextRequest) {
 
     if (!fileId) {
       return NextResponse.json({ error: "fileId parameter is required" }, { status: 400 })
+    }
+    
+    // Get auth info - try current user first
+    let userId: string | null = null
+    let clerkUserId: string | null = null
+    try {
+      const authResult = await auth()
+      clerkUserId = authResult?.userId || null
+      console.log(`🔍 Thumbnail request - current userId: ${clerkUserId || 'null'}, fileId: ${fileId.substring(0, 10)}...`)
+    } catch (authError) {
+      console.log(`⚠️ Auth error in thumbnail-proxy: ${authError instanceof Error ? authError.message : String(authError)}`)
+    }
+    
+    // If no current user, try to find the folder owner from the database
+    // This handles cases where the folder was created by a logged-in user but current session isn't available
+    if (!clerkUserId) {
+      try {
+        // Find the image to get its folder, then get the folder's user
+        const image = await prisma.image.findUnique({
+          where: { fileId },
+          select: {
+            folder: {
+              select: {
+                userId: true,
+                user: {
+                  select: {
+                    clerkId: true,
+                  },
+                },
+              },
+            },
+          },
+        })
+        
+        if (image?.folder?.user?.clerkId) {
+          clerkUserId = image.folder.user.clerkId
+          console.log(`🔍 Found folder owner from DB: ${clerkUserId.substring(0, 10)}... for fileId: ${fileId.substring(0, 10)}...`)
+        }
+      } catch (dbError) {
+        console.log(`⚠️ Error looking up folder owner: ${dbError instanceof Error ? dbError.message : String(dbError)}`)
+      }
+    }
+    
+    // Try to get Google OAuth token from SSO connection (optional)
+    let accessToken: string | null = null
+    if (clerkUserId) {
+      try {
+        // Use Clerk's API to get OAuth token (fixes deprecation warning)
+        const client = await clerkClient()
+        const tokenResponse = await client.users.getUserOauthAccessToken(clerkUserId, 'google') // Remove 'oauth_' prefix
+        
+        if (tokenResponse && tokenResponse.data && tokenResponse.data.length > 0 && tokenResponse.data[0].token) {
+          accessToken = tokenResponse.data[0].token
+          console.log(`✅ OAuth token retrieved for thumbnail request (fileId: ${fileId.substring(0, 10)}...)`)
+        } else {
+          console.log(`ℹ️ No OAuth token in response for user ${clerkUserId.substring(0, 10)}... (fileId: ${fileId.substring(0, 10)}...)`)
+        }
+      } catch (error) {
+        // Token not available - will use API key for public folders
+        console.log(`ℹ️ No Google OAuth token available for thumbnail (fileId: ${fileId.substring(0, 10)}...), will use API key`)
+        console.log(`   Error: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    } else {
+      console.log(`ℹ️ No userId found (current or from DB), using API key for thumbnail (fileId: ${fileId.substring(0, 10)}...)`)
     }
 
     if (isNaN(size) || size < 32 || size > 1600) {
@@ -69,8 +125,8 @@ export async function GET(request: NextRequest) {
     let thumbnailUrl = getCachedThumbnailUrl(fileId, size)
     
     if (!thumbnailUrl) {
-      // Fetch fresh thumbnail URL from Google Drive API
-      thumbnailUrl = await getFreshThumbnailUrl(fileId, size)
+      // Fetch fresh thumbnail URL from Google Drive API (pass OAuth token for private files)
+      thumbnailUrl = await getFreshThumbnailUrl(fileId, size, accessToken || undefined)
       
       if (!thumbnailUrl) {
         console.error(`❌ No thumbnail available for file ${fileId}`)
@@ -83,7 +139,7 @@ export async function GET(request: NextRequest) {
 
     // Fetch the actual thumbnail image
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout (reduced from 15s)
 
     try {
       const headers: Record<string, string> = {
@@ -105,7 +161,7 @@ export async function GET(request: NextRequest) {
         // If the cached URL failed, try fetching a fresh one
         if (getCachedThumbnailUrl(fileId, size)) {
           thumbnailCache.delete(`${fileId}-${size}`)
-          const freshUrl = await getFreshThumbnailUrl(fileId, size)
+          const freshUrl = await getFreshThumbnailUrl(fileId, size, accessToken || undefined)
           
           if (freshUrl) {
             setCachedThumbnailUrl(fileId, size, freshUrl)

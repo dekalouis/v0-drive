@@ -33,7 +33,10 @@ export function ImageCard({ image, onRetry, retryingImages, onSelect }: ImageCar
   const [retryCount, setRetryCount] = useState(0)
 
   const handleImageError = () => {
-    console.error(`Image failed to load: ${image.fileId}`)
+    // Only log error in development, don't spam console in production
+    if (process.env.NODE_ENV === 'development') {
+      console.error(`Image failed to load: ${image.fileId}`)
+    }
     setImageError(true)
     setIsLoading(false)
   }
