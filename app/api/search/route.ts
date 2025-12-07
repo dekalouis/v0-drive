@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { generateTextEmbedding } from "@/lib/gemini"
+import { generateTextEmbedding, normalizeTextForEmbedding } from "@/lib/gemini"
 import { findMostSimilar } from "@/lib/vector"
 
 // Helper function to clean captions
@@ -49,8 +49,12 @@ export async function POST(request: NextRequest) {
     // Validate topK
     const maxResults = Math.min(Math.max(1, Number.parseInt(topK) || 12), 50)
 
-    // Generate query embedding
-    const queryEmbedding = await generateTextEmbedding(query.trim())
+    // Normalize and generate query embedding
+    // Normalization (lowercase, trim, collapse whitespace) is applied automatically
+    // to ensure consistent matching with stored caption embeddings
+    const normalizedQuery = normalizeTextForEmbedding(query)
+    console.log(`🔍 Search query: "${query}" -> normalized: "${normalizedQuery}"`)
+    const queryEmbedding = await generateTextEmbedding(normalizedQuery)
 
     // Get all completed images
     const images = await prisma.image.findMany({

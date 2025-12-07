@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Search, Image as ImageIcon, Loader2, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react"
+import { Search, Image as ImageIcon, Loader2, RefreshCw, ChevronLeft, ChevronRight, FolderSync } from "lucide-react"
 import { ImageCard } from "@/components/image-card"
 
 interface Image {
@@ -43,6 +43,8 @@ export default function FolderPage() {
   const [searching, setSearching] = useState(false)
   const [retryingImages, setRetryingImages] = useState<Set<string>>(new Set())
   const [retryingAll, setRetryingAll] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -153,6 +155,36 @@ export default function FolderPage() {
       console.error("Retry all error:", error)
     } finally {
       setRetryingAll(false)
+    }
+  }
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncMessage(null)
+    
+    try {
+      const response = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId }),
+      })
+      
+      const data = await response.json()
+      
+      if (response.ok) {
+        setSyncMessage(data.message)
+        // Refresh data
+        fetchFolderData()
+        // Clear message after 5 seconds
+        setTimeout(() => setSyncMessage(null), 5000)
+      } else {
+        setSyncMessage(`Error: ${data.error}`)
+      }
+    } catch (error) {
+      console.error("Sync error:", error)
+      setSyncMessage("Sync failed. Please try again.")
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -393,22 +425,38 @@ export default function FolderPage() {
                   <div className="text-sm text-muted-foreground">
                     {folder.processedImages} / {folder.totalImages} images
                   </div>
-                  {failedImages.length > 0 && (
+                  <div className="flex flex-col sm:flex-row gap-2">
                     <Button
-                      onClick={handleRetryAllFailed}
-                      disabled={retryingAll}
+                      onClick={handleSync}
+                      disabled={syncing}
                       variant="outline"
                       size="sm"
                       className="flex items-center gap-2 w-full sm:w-auto justify-center"
                     >
-                      {retryingAll ? (
+                      {syncing ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <RefreshCw className="h-4 w-4" />
+                        <FolderSync className="h-4 w-4" />
                       )}
-                      Retry All Failed ({failedImages.length})
+                      Sync with Drive
                     </Button>
-                  )}
+                    {failedImages.length > 0 && (
+                      <Button
+                        onClick={handleRetryAllFailed}
+                        disabled={retryingAll}
+                        variant="outline"
+                        size="sm"
+                        className="flex items-center gap-2 w-full sm:w-auto justify-center"
+                      >
+                        {retryingAll ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4" />
+                        )}
+                        Retry All Failed ({failedImages.length})
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </CardHeader>
@@ -419,6 +467,11 @@ export default function FolderPage() {
                 {folder.status === "completed" && "All images have been processed!"}
                 {folder.status === "failed" && "Processing failed. Please try again."}
               </p>
+              {syncMessage && (
+                <p className={`text-sm mt-2 ${syncMessage.startsWith('Error') ? 'text-red-500' : 'text-green-600'}`}>
+                  {syncMessage}
+                </p>
+              )}
             </CardContent>
           </Card>
 

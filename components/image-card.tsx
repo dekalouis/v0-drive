@@ -87,15 +87,9 @@ export function ImageCard({ image, onRetry, retryingImages }: ImageCardProps) {
 
   const displayCaption = cleanCaption(image.caption)
 
-  // Generate image URL - prioritize thumbnails to avoid 403 errors
+  // Generate image URL - always use thumbnail proxy to avoid expired links
   const getImageUrl = () => {
-    // Use thumbnail first since full images are getting 403s
-    if (image.thumbnailLink) {
-      return image.thumbnailLink
-    }
-    
-    // Fallback to proxy for high-res if needed
-    const baseUrl = `/api/image-proxy?fileId=${image.fileId}`
+    const baseUrl = `/api/thumbnail-proxy?fileId=${image.fileId}&size=220`
     return retryCount > 0 ? `${baseUrl}&retry=${retryCount}` : baseUrl
   }
 

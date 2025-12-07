@@ -1,4 +1,7 @@
-import { google } from "googleapis"
+import { google, drive_v3 } from "googleapis"
+
+// Type for Drive file metadata
+export type DriveFile = drive_v3.Schema$File
 
 // Initialize Google Drive API client
 export function getDriveClient() {
@@ -96,6 +99,95 @@ export async function validateAndListImages(folderId: string) {
 }
 
 /**
+ * Recursively list all images in a folder and its subfolders
+ */
+export async function listImagesRecursively(folderId: string): Promise<{
+  success: boolean
+  folderName: string | null
+  images: DriveFile[]
+  count: number
+  error?: string
+}> {
+  const drive = getDriveClient()
+  const allImages: DriveFile[] = []
+
+  try {
+    // Get folder metadata
+    const folderResponse = await drive.files.get({
+      fileId: folderId,
+      fields: "id,name,mimeType",
+    })
+    const folderName = folderResponse.data.name || null
+
+    // Helper function to recursively scan folders
+    async function scanFolder(currentFolderId: string, nextPageToken?: string): Promise<void> {
+      // List all files (images and folders) in current folder
+      const response = await drive.files.list({
+        q: `'${currentFolderId}' in parents and trashed=false`,
+        fields: "nextPageToken,files(id,name,mimeType,thumbnailLink,webViewLink,size,md5Checksum,modifiedTime,version)",
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+        pageSize: 1000,
+        pageToken: nextPageToken,
+      })
+
+      const files = response.data.files || []
+      
+      for (const file of files) {
+        if (file.mimeType?.startsWith("image/")) {
+          // It's an image - add to results
+          allImages.push(file)
+        } else if (file.mimeType === "application/vnd.google-apps.folder" && file.id) {
+          // It's a subfolder - recursively scan it
+          console.log(`📂 Scanning subfolder: ${file.name}`)
+          await scanFolder(file.id)
+        }
+      }
+
+      // Handle pagination
+      if (response.data.nextPageToken) {
+        await scanFolder(currentFolderId, response.data.nextPageToken)
+      }
+    }
+
+    // Start recursive scan from root folder
+    console.log(`🔍 Starting recursive scan of folder: ${folderName}`)
+    await scanFolder(folderId)
+    console.log(`✅ Found ${allImages.length} total images (including subfolders)`)
+
+    return {
+      success: true,
+      folderName,
+      images: allImages,
+      count: allImages.length,
+    }
+  } catch (error: unknown) {
+    console.error("Drive API error during recursive listing:", error)
+
+    if (error && typeof error === "object" && "code" in error) {
+      const driveError = error as { code: number }
+      if (driveError.code === 403 || driveError.code === 404) {
+        return {
+          success: false,
+          folderName: null,
+          error: "The folder isn't publicly accessible. Please set sharing to 'Anyone with the link' (viewer) and try again.",
+          images: [],
+          count: 0,
+        }
+      }
+    }
+
+    return {
+      success: false,
+      folderName: null,
+      error: "Failed to access the folder. Please check the URL and try again.",
+      images: [],
+      count: 0,
+    }
+  }
+}
+
+/**
  * Get download URL for a Drive file
  */
 export function getDownloadUrl(fileId: string): string {
@@ -107,6 +199,39 @@ export function getDownloadUrl(fileId: string): string {
  */
 export function getAuthenticatedDownloadUrl(fileId: string): string {
   return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${process.env.GOOGLE_DRIVE_API_KEY}`
+}
+
+/**
+ * Get fresh thumbnail URL for a file from Google Drive API
+ * @param fileId - The Google Drive file ID
+ * @param size - Optional thumbnail size (default 220px)
+ * @returns Fresh thumbnail URL or null if not available
+ */
+export async function getFreshThumbnailUrl(fileId: string, size: number = 220): Promise<string | null> {
+  const drive = getDriveClient()
+
+  try {
+    const response = await drive.files.get({
+      fileId,
+      fields: "thumbnailLink",
+    })
+
+    const thumbnailLink = response.data.thumbnailLink
+    if (!thumbnailLink) {
+      return null
+    }
+
+    // Modify the thumbnail size if needed (default is s220)
+    // Google Drive thumbnail URLs end with =sXXX where XXX is the size
+    if (size !== 220) {
+      return thumbnailLink.replace(/=s\d+$/, `=s${size}`)
+    }
+
+    return thumbnailLink
+  } catch (error: unknown) {
+    console.error(`Failed to get thumbnail for file ${fileId}:`, error)
+    return null
+  }
 }
 
 /**

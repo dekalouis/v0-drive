@@ -63,7 +63,9 @@ export interface ImageJobData {
 
 // Queue folder processing job
 export async function queueFolderProcessing(folderId: string, googleFolderId: string) {
-  const jobId = `folder:${googleFolderId}`
+  // Include timestamp to allow re-processing after sync finds new images
+  const timestamp = Date.now()
+  const jobId = `folder:${googleFolderId}:${timestamp}`
 
   console.log(`🚀 Queueing folder processing job: ${jobId}`)
   console.log(`   - Database ID: ${folderId}`)
@@ -72,8 +74,7 @@ export async function queueFolderProcessing(folderId: string, googleFolderId: st
 
   try {
     await folderQueue.add("process", { folderId, googleFolderId } as FolderJobData, {
-      jobId, // Use folder ID for deduplication
-      // delay: 1000, // Small delay to ensure DB consistency - REMOVED FOR TESTING
+      jobId,
     })
 
     console.log(`✅ Successfully queued folder processing job: ${jobId}`)
