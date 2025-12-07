@@ -73,7 +73,7 @@ export async function validateAndListImages(folderId: string) {
     console.error("Drive API error:", error)
 
     if (error && typeof error === 'object' && 'code' in error) {
-      const driveError = error as { code: number }
+      const driveError = error as { code: number; message?: string }
       if (driveError.code === 403 || driveError.code === 404) {
         return {
           success: false,

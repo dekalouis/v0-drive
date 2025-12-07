@@ -30,13 +30,13 @@ export async function POST(request: NextRequest) {
       }
 
       // Reset image status to pending
+      // Note: captionVec will be overwritten when the image is reprocessed
       await prisma.image.update({
         where: { id: imageId },
         data: { 
           status: "pending",
           caption: null,
           tags: null,
-          captionVec: { set: null }
         }
       })
 
@@ -75,6 +75,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Reset all failed images to pending
+      // Note: captionVec will be overwritten when images are reprocessed
       await prisma.image.updateMany({
         where: { 
           folderId,
@@ -84,7 +85,6 @@ export async function POST(request: NextRequest) {
           status: "pending",
           caption: null,
           tags: null,
-          captionVec: { set: null }
         }
       })
 
