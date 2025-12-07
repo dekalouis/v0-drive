@@ -29,7 +29,8 @@
     "queue:clear": "tsx scripts/clear-all-queues.ts",
     "folder:status": "tsx scripts/check-folder-status.ts",
     "folder:retry": "tsx scripts/retry-folder.ts",
-    "folder:delete": "tsx scripts/safe-delete.ts"
+    "folder:delete": "tsx scripts/safe-delete.ts",
+    "deploy:migrate": "./scripts/deploy-migrate.sh"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.36.0",

@@ -19,11 +19,32 @@ export const metadata: Metadata = {
   description: "Search and organize your Google Drive images",
 };
 
+// Make layout dynamic to avoid static generation issues with Clerk
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Check if Clerk publishable key is available
+  const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  
+  // If no key during build, render without ClerkProvider (for build-time)
+  // At runtime, this should always be available
+  if (!clerkPublishableKey) {
+    return (
+      <html lang="en">
+        <body
+          className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        >
+          <Navbar />
+          {children}
+        </body>
+      </html>
+    );
+  }
+
   return (
     <ClerkProvider>
       <html lang="en">
