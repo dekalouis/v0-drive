@@ -1,6 +1,25 @@
 import { clerkMiddleware } from '@clerk/nextjs/server'
+import { NextResponse } from 'next/server'
+import type { NextRequest, NextFetchEvent } from 'next/server'
 
-export default clerkMiddleware()
+// Only use Clerk middleware if keys are available (for build-time compatibility)
+const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+const clerkSecretKey = process.env.CLERK_SECRET_KEY
+
+// Create Clerk middleware handler only if keys are available
+const clerkHandler = (clerkPublishableKey && clerkSecretKey) 
+  ? clerkMiddleware()
+  : null
+
+export default function middleware(request: NextRequest, event: NextFetchEvent) {
+  // If Clerk keys are not available, just pass through (for build-time)
+  if (!clerkHandler) {
+    return NextResponse.next()
+  }
+  
+  // Use Clerk middleware when keys are available
+  return clerkHandler(request, event)
+}
 
 export const config = {
   matcher: [
