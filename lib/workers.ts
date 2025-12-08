@@ -526,10 +526,6 @@ imageWorker.on("active", (job) => {
   console.log(`🔄 Image job ${job.id} is now active (${job.name})`)
 })
 
-imageWorker.on("waiting", (jobId) => {
-  console.log(`⏳ Image job ${jobId} is waiting to be processed`)
-})
-
 imageWorker.on("error", (err) => {
   console.error(`❌ Image worker error:`, err)
 })
