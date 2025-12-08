@@ -205,7 +205,7 @@ export const folderWorker = new Worker(
   },
   {
     connection,
-    concurrency: 5, // Keep folder workers low since they handle batches
+    concurrency: 2, // Lower to reduce memory/CPU spikes on Railway
     // Stalled job handling - critical for Railway restarts
     lockDuration: 120000, // 2 minutes - jobs can take time for large folders
     stalledInterval: 30000, // Check for stalled jobs every 30 seconds
@@ -432,7 +432,7 @@ export const imageWorker = new Worker(
   },
   {
     connection,
-    concurrency: 10, // Increased to handle more batches simultaneously
+    concurrency: 3, // Lower to avoid worker restarts on Railway
     // Stalled job handling - critical for Railway restarts
     lockDuration: 300000, // 5 minutes - image processing can take time
     stalledInterval: 30000, // Check for stalled jobs every 30 seconds

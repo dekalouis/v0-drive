@@ -2,8 +2,13 @@ import { folderWorker, imageWorker } from "../lib/workers"
 import { prisma } from "../lib/prisma"
 import { queueImageBatch } from "../lib/queue"
 
-// Check for pending images on startup and re-queue them
+// Prevent overlapping recoveries
+let isRecovering = false
+
+// Check for pending images and re-queue them
 async function recoverPendingImages() {
+  if (isRecovering) return
+  isRecovering = true
   try {
     console.log("🔍 Checking for pending images to recover...")
     
@@ -29,7 +34,7 @@ async function recoverPendingImages() {
             mimeType: true,
             name: true,
           },
-          take: 100, // Limit to avoid memory issues
+          take: 500, // higher limit for larger folders
         }
       }
     })
@@ -79,6 +84,8 @@ async function recoverPendingImages() {
   } catch (error) {
     console.error("❌ Error recovering pending images:", error)
     // Don't throw - allow workers to start even if recovery fails
+  } finally {
+    isRecovering = false
   }
 }
 
@@ -89,6 +96,11 @@ recoverPendingImages().then(() => {
   console.log("- Image worker: processing individual images with AI captioning")
   console.log("Press Ctrl+C to stop workers")
 })
+
+// Periodic recovery: re-queue any stuck pending images every 60s
+setInterval(() => {
+  recoverPendingImages()
+}, 60000)
 
 // Keep the process alive
 process.on("SIGTERM", () => {
