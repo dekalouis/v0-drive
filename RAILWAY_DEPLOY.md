@@ -72,6 +72,7 @@ npx prisma migrate deploy
 - Check that all migration files are committed to git
 - Ensure the database has the `vector` extension enabled (should be in migration)
 - Run `npx prisma migrate status` to see pending migrations
+- **If you see pgvector errors**: See [RAILWAY_PGVECTOR_SETUP.md](./RAILWAY_PGVECTOR_SETUP.md) for detailed setup instructions
 
 ## Notes
 

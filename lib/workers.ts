@@ -263,22 +263,45 @@ async function processImage(image: { imageId: string, fileId: string, etag: stri
     const embedding = await generateCaptionEmbedding(caption, tags)
     const embeddingTime = Date.now() - embeddingStart
 
-    // Ensure pgvector + HNSW index exist before we attempt to persist embeddings
-    await ensureCaptionVectorIndex()
-
-    // Update image with results using raw SQL for pgvector
+    // Update image with results - try with pgvector, fallback to regular update if unavailable
     const dbUpdateStart = Date.now()
-    const vectorString = `[${embedding.join(',')}]`
-    await prisma.$executeRaw`
-      UPDATE images 
-      SET 
-        status = 'completed',
-        caption = ${caption},
-        tags = ${tags.join(",")},
-        "captionVec" = ${vectorString}::vector,
-        "updatedAt" = NOW()
-      WHERE id = ${imageId}
-    `
+    try {
+      // Ensure pgvector + HNSW index exist before we attempt to persist embeddings
+      await ensureCaptionVectorIndex()
+
+      // Update with vector embedding using raw SQL for pgvector
+      const vectorString = `[${embedding.join(',')}]`
+      await prisma.$executeRaw`
+        UPDATE images 
+        SET 
+          status = 'completed',
+          caption = ${caption},
+          tags = ${tags.join(",")},
+          "captionVec" = ${vectorString}::vector,
+          "updatedAt" = NOW()
+        WHERE id = ${imageId}
+      `
+    } catch (error: any) {
+      // If pgvector is not available, save without embedding
+      const errorMessage = error?.message || String(error)
+      if (errorMessage.includes('pgvector') || errorMessage.includes('vector') || errorMessage.includes('extension')) {
+        console.warn(`⚠️  pgvector not available for ${fileId}, saving without embedding: ${errorMessage}`)
+        
+        // Fallback: Update without vector embedding
+        await prisma.image.update({
+          where: { id: imageId },
+          data: {
+            status: 'completed',
+            caption,
+            tags: tags.join(","),
+            updatedAt: new Date(),
+          },
+        })
+      } else {
+        // Re-throw non-pgvector errors
+        throw error
+      }
+    }
     const dbUpdateTime = Date.now() - dbUpdateStart
 
     // Update folder progress (can be done in batch later, but keeping per image for granular UI updates)

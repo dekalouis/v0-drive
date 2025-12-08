@@ -115,42 +115,91 @@ export async function POST(request: NextRequest) {
       searchTime = Date.now() - searchStart
       console.log(`⏱️ Filename search: ${searchTime}ms (found ${results.length} results)`)
     } else {
-      await ensurePgvectorExtension()
-      // Semantic search using embeddings
-      const normalizedQuery = normalizeTextForEmbedding(trimmedQuery)
-      console.log(`🔍 Semantic search query: "${trimmedQuery}" -> normalized: "${normalizedQuery}"`)
-      
-      const startTime = Date.now()
-      const queryEmbedding = await generateTextEmbedding(normalizedQuery)
-      embeddingTime = Date.now() - startTime
-      console.log(`⏱️ Embedding generation: ${embeddingTime}ms`)
+      // Try semantic search, fallback to filename search if pgvector unavailable
+      try {
+        await ensurePgvectorExtension()
+        
+        // Semantic search using embeddings
+        const normalizedQuery = normalizeTextForEmbedding(trimmedQuery)
+        console.log(`🔍 Semantic search query: "${trimmedQuery}" -> normalized: "${normalizedQuery}"`)
+        
+        const startTime = Date.now()
+        const queryEmbedding = await generateTextEmbedding(normalizedQuery)
+        embeddingTime = Date.now() - startTime
+        console.log(`⏱️ Embedding generation: ${embeddingTime}ms`)
 
-      // Convert embedding to pgvector format
-      const vectorString = toVectorString(queryEmbedding)
+        // Convert embedding to pgvector format
+        const vectorString = toVectorString(queryEmbedding)
 
-      // Use pgvector SQL for fast similarity search
-      // The <=> operator computes cosine distance (0 = identical, 2 = opposite)
-      // We use 1 - distance to get similarity score (1 = identical, -1 = opposite)
-      const searchStart = Date.now()
-      results = await prisma.$queryRaw<SearchResult[]>`
-        SELECT 
-          id,
-          "fileId",
-          name,
-          "thumbnailLink",
-          "webViewLink",
-          caption,
-          tags,
-          1 - ("captionVec" <=> ${vectorString}::vector) as similarity
-        FROM images
-        WHERE "folderId" = ${folderId}
-          AND status = 'completed'
-          AND "captionVec" IS NOT NULL
-        ORDER BY "captionVec" <=> ${vectorString}::vector
-        LIMIT ${maxResults}
-      `
-      searchTime = Date.now() - searchStart
-      console.log(`⏱️ pgvector search: ${searchTime}ms (found ${results.length} results)`)
+        // Use pgvector SQL for fast similarity search
+        // The <=> operator computes cosine distance (0 = identical, 2 = opposite)
+        // We use 1 - distance to get similarity score (1 = identical, -1 = opposite)
+        const searchStart = Date.now()
+        results = await prisma.$queryRaw<SearchResult[]>`
+          SELECT 
+            id,
+            "fileId",
+            name,
+            "thumbnailLink",
+            "webViewLink",
+            caption,
+            tags,
+            1 - ("captionVec" <=> ${vectorString}::vector) as similarity
+          FROM images
+          WHERE "folderId" = ${folderId}
+            AND status = 'completed'
+            AND "captionVec" IS NOT NULL
+          ORDER BY "captionVec" <=> ${vectorString}::vector
+          LIMIT ${maxResults}
+        `
+        searchTime = Date.now() - searchStart
+        console.log(`⏱️ pgvector search: ${searchTime}ms (found ${results.length} results)`)
+      } catch (error: any) {
+        // If pgvector is not available, fallback to filename search
+        const errorMessage = error?.message || String(error)
+        if (errorMessage.includes('pgvector') || errorMessage.includes('vector') || errorMessage.includes('extension')) {
+          console.warn(`⚠️  pgvector not available, falling back to filename search: ${errorMessage}`)
+          
+          // Fallback to filename search
+          const searchPattern = `%${trimmedQuery}%`
+          const startsWithPattern = `${trimmedQuery}%`
+          const searchStart = Date.now()
+          
+          results = await prisma.$queryRaw<SearchResult[]>`
+            SELECT 
+              id,
+              "fileId",
+              name,
+              "thumbnailLink",
+              "webViewLink",
+              caption,
+              tags,
+              CASE 
+                WHEN LOWER(name) = LOWER(${trimmedQuery}) THEN 1.0
+                WHEN LOWER(name) LIKE LOWER(${startsWithPattern}) THEN 0.8
+                WHEN LOWER(name) LIKE LOWER(${searchPattern}) THEN 0.6
+                ELSE 0.5
+              END as similarity
+            FROM images
+            WHERE "folderId" = ${folderId}
+              AND status = 'completed'
+              AND LOWER(name) LIKE LOWER(${searchPattern})
+            ORDER BY 
+              CASE 
+                WHEN LOWER(name) = LOWER(${trimmedQuery}) THEN 1
+                WHEN LOWER(name) LIKE LOWER(${startsWithPattern}) THEN 2
+                ELSE 3
+              END,
+              name
+            LIMIT ${maxResults}
+          `
+          searchTime = Date.now() - searchStart
+          console.log(`⏱️ Filename search (fallback): ${searchTime}ms (found ${results.length} results)`)
+        } else {
+          // Re-throw non-pgvector errors
+          throw error
+        }
+      }
     }
 
     // Format results with cleaned captions
