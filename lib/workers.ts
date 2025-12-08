@@ -432,7 +432,7 @@ export const imageWorker = new Worker(
   },
   {
     connection,
-    concurrency: 5, // Match batch size for balanced throughput
+    concurrency: 10, // Increased to handle more batches simultaneously
     // Stalled job handling - critical for Railway restarts
     lockDuration: 300000, // 5 minutes - image processing can take time
     stalledInterval: 30000, // Check for stalled jobs every 30 seconds
@@ -520,6 +520,14 @@ imageWorker.on("ready", () => {
 
 imageWorker.on("stalled", (jobId) => {
   console.warn(`⚠️ Image job ${jobId} stalled - will be retried`)
+})
+
+imageWorker.on("active", (job) => {
+  console.log(`🔄 Image job ${job.id} is now active (${job.name})`)
+})
+
+imageWorker.on("waiting", (jobId) => {
+  console.log(`⏳ Image job ${jobId} is waiting to be processed`)
 })
 
 imageWorker.on("error", (err) => {

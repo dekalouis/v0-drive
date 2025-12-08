@@ -117,11 +117,11 @@ export async function POST(request: NextRequest) {
 
       // Reset all failed images to pending using raw SQL (captionVec is an Unsupported type)
       if (failedImages.length > 0) {
-        await prisma.$executeRaw`
-          UPDATE images 
-          SET status = 'pending', caption = NULL, tags = NULL, "captionVec" = NULL, error = NULL
-          WHERE "folderId" = ${folderId} AND status = 'failed'
-        `
+      await prisma.$executeRaw`
+        UPDATE images 
+        SET status = 'pending', caption = NULL, tags = NULL, "captionVec" = NULL, error = NULL
+        WHERE "folderId" = ${folderId} AND status = 'failed'
+      `
       }
 
       // Update folder status to processing

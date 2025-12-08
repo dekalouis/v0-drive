@@ -119,41 +119,41 @@ export async function POST(request: NextRequest) {
       try {
         await ensurePgvectorExtension()
         
-        // Semantic search using embeddings
-        const normalizedQuery = normalizeTextForEmbedding(trimmedQuery)
-        console.log(`🔍 Semantic search query: "${trimmedQuery}" -> normalized: "${normalizedQuery}"`)
-        
-        const startTime = Date.now()
-        const queryEmbedding = await generateTextEmbedding(normalizedQuery)
-        embeddingTime = Date.now() - startTime
-        console.log(`⏱️ Embedding generation: ${embeddingTime}ms`)
+      // Semantic search using embeddings
+      const normalizedQuery = normalizeTextForEmbedding(trimmedQuery)
+      console.log(`🔍 Semantic search query: "${trimmedQuery}" -> normalized: "${normalizedQuery}"`)
+      
+      const startTime = Date.now()
+      const queryEmbedding = await generateTextEmbedding(normalizedQuery)
+      embeddingTime = Date.now() - startTime
+      console.log(`⏱️ Embedding generation: ${embeddingTime}ms`)
 
-        // Convert embedding to pgvector format
-        const vectorString = toVectorString(queryEmbedding)
+      // Convert embedding to pgvector format
+      const vectorString = toVectorString(queryEmbedding)
 
-        // Use pgvector SQL for fast similarity search
-        // The <=> operator computes cosine distance (0 = identical, 2 = opposite)
-        // We use 1 - distance to get similarity score (1 = identical, -1 = opposite)
-        const searchStart = Date.now()
-        results = await prisma.$queryRaw<SearchResult[]>`
-          SELECT 
-            id,
-            "fileId",
-            name,
-            "thumbnailLink",
-            "webViewLink",
-            caption,
-            tags,
-            1 - ("captionVec" <=> ${vectorString}::vector) as similarity
-          FROM images
-          WHERE "folderId" = ${folderId}
-            AND status = 'completed'
-            AND "captionVec" IS NOT NULL
-          ORDER BY "captionVec" <=> ${vectorString}::vector
-          LIMIT ${maxResults}
-        `
-        searchTime = Date.now() - searchStart
-        console.log(`⏱️ pgvector search: ${searchTime}ms (found ${results.length} results)`)
+      // Use pgvector SQL for fast similarity search
+      // The <=> operator computes cosine distance (0 = identical, 2 = opposite)
+      // We use 1 - distance to get similarity score (1 = identical, -1 = opposite)
+      const searchStart = Date.now()
+      results = await prisma.$queryRaw<SearchResult[]>`
+        SELECT 
+          id,
+          "fileId",
+          name,
+          "thumbnailLink",
+          "webViewLink",
+          caption,
+          tags,
+          1 - ("captionVec" <=> ${vectorString}::vector) as similarity
+        FROM images
+        WHERE "folderId" = ${folderId}
+          AND status = 'completed'
+          AND "captionVec" IS NOT NULL
+        ORDER BY "captionVec" <=> ${vectorString}::vector
+        LIMIT ${maxResults}
+      `
+      searchTime = Date.now() - searchStart
+      console.log(`⏱️ pgvector search: ${searchTime}ms (found ${results.length} results)`)
       } catch (error: any) {
         // If pgvector is not available, fallback to filename search
         const errorMessage = error?.message || String(error)
