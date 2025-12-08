@@ -233,3 +233,4 @@ model FolderScan {
 - [pgvector GitHub](https://github.com/pgvector/pgvector)
 - [Prisma Vector Support](https://www.prisma.io/docs/orm/prisma-schema/data-model/unsupported-database-features)
 
+

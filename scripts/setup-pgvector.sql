@@ -31,3 +31,4 @@ WITH (m = 16, ef_construction = 64);
 -- Note: The <=> operator computes cosine distance (0 = identical, 2 = opposite)
 -- We use 1 - distance to get similarity (1 = identical, -1 = opposite)
 
+

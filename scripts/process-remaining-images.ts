@@ -106,3 +106,4 @@ if (!folderId) {
 }
 
 processRemainingImages(folderId)
+

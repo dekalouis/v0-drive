@@ -6,9 +6,21 @@ import { captionImage, generateCaptionEmbedding, geminiRateLimiter } from "@/lib
 import type { FolderJobData, ImageJobData, ImageBatchJobData } from "@/lib/queue"
 import { queueImageBatch } from "@/lib/queue"
 
-// Redis connection for workers
+// Redis connection for workers with reconnection logic
 const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
   maxRetriesPerRequest: null,
+  // Reconnection settings for Railway restarts
+  retryStrategy: (times: number) => {
+    const delay = Math.min(times * 100, 3000) // Max 3 second delay
+    console.log(`🔄 Redis reconnecting... attempt ${times}, delay ${delay}ms`)
+    return delay
+  },
+  reconnectOnError: (err) => {
+    console.log(`🔄 Redis reconnect on error: ${err.message}`)
+    return true // Always try to reconnect
+  },
+  enableReadyCheck: true,
+  lazyConnect: false,
 })
 
 // Add connection event logging
@@ -22,6 +34,14 @@ connection.on("error", (error) => {
 
 connection.on("ready", () => {
   console.log("✅ Worker Redis ready for operations")
+})
+
+connection.on("reconnecting", () => {
+  console.log("🔄 Worker Redis reconnecting...")
+})
+
+connection.on("close", () => {
+  console.log("⚠️ Worker Redis connection closed")
 })
 
 // Progress tracking for folders
@@ -186,6 +206,10 @@ export const folderWorker = new Worker(
   {
     connection,
     concurrency: 5, // Keep folder workers low since they handle batches
+    // Stalled job handling - critical for Railway restarts
+    lockDuration: 120000, // 2 minutes - jobs can take time for large folders
+    stalledInterval: 30000, // Check for stalled jobs every 30 seconds
+    maxStalledCount: 3, // Retry stalled jobs up to 3 times
   },
 )
 
@@ -409,6 +433,10 @@ export const imageWorker = new Worker(
   {
     connection,
     concurrency: 5, // Match batch size for balanced throughput
+    // Stalled job handling - critical for Railway restarts
+    lockDuration: 300000, // 5 minutes - image processing can take time
+    stalledInterval: 30000, // Check for stalled jobs every 30 seconds
+    maxStalledCount: 3, // Retry stalled jobs up to 3 times
   },
 )
 
@@ -470,6 +498,14 @@ folderWorker.on("ready", () => {
   console.log("🚀 Folder worker is ready to process jobs")
 })
 
+folderWorker.on("stalled", (jobId) => {
+  console.warn(`⚠️ Folder job ${jobId} stalled - will be retried`)
+})
+
+folderWorker.on("error", (err) => {
+  console.error(`❌ Folder worker error:`, err)
+})
+
 imageWorker.on("completed", (job) => {
   console.log(`✅ Image job ${job.id} completed`)
 })
@@ -480,6 +516,14 @@ imageWorker.on("failed", (job, err) => {
 
 imageWorker.on("ready", () => {
   console.log("🚀 Image worker is ready to process jobs")
+})
+
+imageWorker.on("stalled", (jobId) => {
+  console.warn(`⚠️ Image job ${jobId} stalled - will be retried`)
+})
+
+imageWorker.on("error", (err) => {
+  console.error(`❌ Image worker error:`, err)
 })
 
 // Graceful shutdown

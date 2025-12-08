@@ -1,22 +1,42 @@
 import { Queue } from "bullmq"
 import IORedis from "ioredis"
 
-// Redis connection
+// Redis connection with reconnection logic for Railway restarts
 const connection = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", {
   maxRetriesPerRequest: null,
+  // Reconnection settings for Railway restarts
+  retryStrategy: (times: number) => {
+    const delay = Math.min(times * 100, 3000) // Max 3 second delay
+    console.log(`🔄 Queue Redis reconnecting... attempt ${times}, delay ${delay}ms`)
+    return delay
+  },
+  reconnectOnError: (err) => {
+    console.log(`🔄 Queue Redis reconnect on error: ${err.message}`)
+    return true // Always try to reconnect
+  },
+  enableReadyCheck: true,
+  lazyConnect: false,
 })
 
 // Add connection event logging
 connection.on("connect", () => {
-  console.log("🔗 Redis connected successfully")
+  console.log("🔗 Queue Redis connected successfully")
 })
 
 connection.on("error", (error) => {
-  console.error("❌ Redis connection error:", error)
+  console.error("❌ Queue Redis connection error:", error)
 })
 
 connection.on("ready", () => {
-  console.log("✅ Redis ready for operations")
+  console.log("✅ Queue Redis ready for operations")
+})
+
+connection.on("reconnecting", () => {
+  console.log("🔄 Queue Redis reconnecting...")
+})
+
+connection.on("close", () => {
+  console.log("⚠️ Queue Redis connection closed")
 })
 
 // Queue configurations
@@ -177,6 +197,7 @@ export async function cleanupJobs() {
       folderQueue.clean(24 * 60 * 60 * 1000, 10, "completed"), // Keep completed jobs for 24h
       folderQueue.clean(7 * 24 * 60 * 60 * 1000, 50, "failed"), // Keep failed jobs for 7 days
       imageQueue.clean(24 * 60 * 60 * 1000, 100, "completed"),
+      imageQueue.clean(7 * 24 * 60 * 60 * 1000, 100, "completed"),
       imageQueue.clean(7 * 24 * 60 * 60 * 1000, 100, "failed"),
     ])
     
@@ -184,5 +205,89 @@ export async function cleanupJobs() {
   } catch (error) {
     console.error("❌ Job cleanup failed:", error)
     throw error
+  }
+}
+
+// Recover stalled/stuck jobs - useful after Railway restarts
+export async function recoverStalledJobs() {
+  console.log("🔄 Recovering stalled jobs...")
+  
+  try {
+    const [folderStats, imageStats] = await Promise.all([
+      folderQueue.getJobCounts(),
+      imageQueue.getJobCounts()
+    ])
+    
+    console.log(`📊 Current queue state:`)
+    console.log(`   Folders - waiting: ${folderStats.waiting}, active: ${folderStats.active}, failed: ${folderStats.failed}`)
+    console.log(`   Images - waiting: ${imageStats.waiting}, active: ${imageStats.active}, failed: ${imageStats.failed}`)
+    
+    // Get active jobs that might be stalled
+    const [activeFolderJobs, activeImageJobs] = await Promise.all([
+      folderQueue.getJobs(['active']),
+      imageQueue.getJobs(['active'])
+    ])
+    
+    let recoveredCount = 0
+    
+    // Check for jobs that have been active too long (likely stalled)
+    const stalledThreshold = 5 * 60 * 1000 // 5 minutes
+    const now = Date.now()
+    
+    for (const job of activeFolderJobs) {
+      if (job.processedOn && now - job.processedOn > stalledThreshold) {
+        console.log(`⚠️ Found stalled folder job: ${job.id}, moving to failed`)
+        await job.moveToFailed(new Error('Job stalled - worker restart recovery'), 'recovery')
+        recoveredCount++
+      }
+    }
+    
+    for (const job of activeImageJobs) {
+      if (job.processedOn && now - job.processedOn > stalledThreshold) {
+        console.log(`⚠️ Found stalled image job: ${job.id}, moving to failed`)
+        await job.moveToFailed(new Error('Job stalled - worker restart recovery'), 'recovery')
+        recoveredCount++
+      }
+    }
+    
+    console.log(`✅ Recovery complete: ${recoveredCount} stalled jobs recovered`)
+    
+    return {
+      folderStats,
+      imageStats,
+      recoveredCount
+    }
+  } catch (error) {
+    console.error("❌ Job recovery failed:", error)
+    throw error
+  }
+}
+
+// Health check for queue system
+export async function healthCheck() {
+  try {
+    // Test Redis connection
+    await connection.ping()
+    
+    const [folderStats, imageStats] = await Promise.all([
+      folderQueue.getJobCounts(),
+      imageQueue.getJobCounts()
+    ])
+    
+    return {
+      healthy: true,
+      redis: 'connected',
+      queues: {
+        folders: folderStats,
+        images: imageStats
+      },
+      timestamp: new Date().toISOString()
+    }
+  } catch (error) {
+    return {
+      healthy: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    }
   }
 }

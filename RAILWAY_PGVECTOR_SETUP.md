@@ -124,3 +124,4 @@ Once pgvector is enabled:
 4. ✅ Existing images will get embeddings on next processing/retry
 
 The application automatically detects if pgvector is available and handles it gracefully.
+
