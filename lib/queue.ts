@@ -148,10 +148,20 @@ export async function queueImageBatch(data: ImageBatchJobData) {
   console.log(`🚀 Queueing image batch job: ${jobId} with ${data.images.length} images`)
 
   try {
-    await imageQueue.add("batch-caption", data, {
+    const job = await imageQueue.add("batch-caption", data, {
       jobId,
+      // Ensure job is retried if worker crashes
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 2000,
+      },
     })
-    console.log(`✅ Successfully queued batch job: ${jobId}`)
+    console.log(`✅ Successfully queued batch job: ${jobId} (job ID: ${job.id})`)
+    
+    // Log queue stats after adding
+    const stats = await imageQueue.getJobCounts()
+    console.log(`📊 Image queue stats after queuing: waiting=${stats.waiting}, active=${stats.active}, completed=${stats.completed}, failed=${stats.failed}`)
   } catch (error) {
     console.error(`❌ Failed to queue batch job: ${jobId}`, error)
     throw error
