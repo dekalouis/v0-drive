@@ -234,3 +234,4 @@ model FolderScan {
 - [Prisma Vector Support](https://www.prisma.io/docs/orm/prisma-schema/data-model/unsupported-database-features)
 
 
+// Might need to change vision captioning model overall
