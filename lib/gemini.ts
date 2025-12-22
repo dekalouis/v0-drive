@@ -15,18 +15,18 @@ async function downloadWithRetry(fileId: string, maxRetries = 3, accessToken?: s
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`⏬ Attempt ${attempt}/${maxRetries} downloading image: ${fileId}`)
-      
+
       // Rate limit Google Drive requests
       await driveRateLimiter.waitIfNeeded()
-      
+
       // If accessToken is provided, use authenticated download URL (always works if token valid)
       // Otherwise use public download URL
       const downloadUrl = accessToken ? getAuthenticatedDownloadUrl(fileId) : getDownloadUrl(fileId)
-      
+
       // Create AbortController for timeout
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
-      
+
       const headers: Record<string, string> = {
         "User-Agent": "Drive-Image-Searcher/1.0",
       }
@@ -34,43 +34,43 @@ async function downloadWithRetry(fileId: string, maxRetries = 3, accessToken?: s
       if (accessToken) {
         headers.Authorization = `Bearer ${accessToken}`
       }
-      
+
       const response = await fetch(downloadUrl, {
         headers,
         signal: controller.signal,
       })
-      
+
       clearTimeout(timeoutId)
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
-      
+
       const arrayBuffer = await response.arrayBuffer()
       const buffer = Buffer.from(arrayBuffer)
-      
+
       console.log(`✅ Successfully downloaded image: ${fileId} (${buffer.length} bytes)`)
       return buffer
-      
+
     } catch (error: unknown) {
       const isLastAttempt = attempt === maxRetries
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      
+
       console.log(`❌ Download attempt ${attempt}/${maxRetries} failed for ${fileId}: ${errorMessage}`)
-      
+
       if (isLastAttempt) {
         // Try alternative download URL on final attempt
         try {
           console.log(`🔄 Trying alternative download URL for ${fileId}`)
-          
+
           // Rate limit the alternative request too
           await driveRateLimiter.waitIfNeeded()
-          
+
           const alternativeUrl = getAuthenticatedDownloadUrl(fileId)
-          
+
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 30000)
-          
+
           const headers: Record<string, string> = {
             "User-Agent": "Drive-Image-Searcher/1.0",
           }
@@ -83,36 +83,36 @@ async function downloadWithRetry(fileId: string, maxRetries = 3, accessToken?: s
             headers,
             signal: controller.signal,
           })
-          
+
           clearTimeout(timeoutId)
-          
+
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`)
           }
-          
+
           const arrayBuffer = await response.arrayBuffer()
           const buffer = Buffer.from(arrayBuffer)
-          
+
           console.log(`✅ Alternative download successful for ${fileId} (${buffer.length} bytes)`)
           return buffer
-          
+
         } catch (altError: unknown) {
           const altErrorMessage = altError instanceof Error ? altError.message : 'Unknown error'
           console.error(`💀 All download attempts failed for ${fileId}:`, altErrorMessage)
           throw new Error(`Failed to download image after ${maxRetries} attempts: ${errorMessage}`)
         }
       }
-      
+
       // Exponential backoff: 2^attempt seconds + jitter
       const baseDelay = Math.pow(2, attempt) * 1000 // 2s, 4s, 8s
       const jitter = Math.random() * 1000 // 0-1s random jitter
       const delay = baseDelay + jitter
-      
+
       console.log(`⏳ Waiting ${Math.round(delay)}ms before retry ${attempt + 1}/${maxRetries}`)
       await new Promise(resolve => setTimeout(resolve, delay))
     }
   }
-  
+
   throw new Error(`Should never reach here`)
 }
 
@@ -150,7 +150,7 @@ export async function captionImage(
 }> {
   const genAI = getGeminiClient()
   // Use gemini-2.5-flash for best captioning quality
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-lite" })
 
   try {
     // Download the image (prefer thumbnail for speed)
@@ -180,7 +180,7 @@ export async function captionImage(
     // Parse markdown response and extract caption + tags
     try {
       const cleanedText = text.trim()
-      
+
       // Extract Search Keywords section for tags
       const tags: string[] = []
       const keywordsMatch = cleanedText.match(/\*\*Search Keywords:\*\*\s*([^\n*]+)/i)
@@ -191,7 +191,7 @@ export async function captionImage(
           .filter(k => k.length > 0 && k.length <= 30)
         tags.push(...keywords)
       }
-      
+
       // Also extract keywords from other sections for richer tagging
       const subjectsMatch = cleanedText.match(/\*\*Subjects & Objects:\*\*\s*([^\n*]+)/i)
       if (subjectsMatch) {
@@ -202,7 +202,7 @@ export async function captionImage(
           .filter(s => s.length > 0 && s.length <= 30)
         tags.push(...subjects)
       }
-      
+
       // Build caption from the full markdown (without the Search Keywords line for cleaner display)
       const caption = cleanedText
         .replace(/\*\*Search Keywords:\*\*[^\n]*/gi, '') // Remove keywords line
@@ -212,7 +212,7 @@ export async function captionImage(
         .replace(/\s+/g, ' ') // Normalize whitespace
         .trim()
         .substring(0, 1500) // Limit for embedding efficiency
-      
+
       // Clean and deduplicate tags
       const cleanedTags = [...new Set(
         tags
@@ -228,21 +228,21 @@ export async function captionImage(
       // Fallback: use raw text as caption
       console.warn("Failed to parse markdown response, using fallback:", parseError)
       console.warn("Raw response (first 500 chars):", text.substring(0, 500))
-      
+
       const fallbackCaption = text
         .replace(/\*\*/g, '')
         .replace(/\s+/g, ' ')
         .trim()
         .substring(0, 500)
-      
+
       // Extract potential keywords from the text
       const wordPattern = /\b[a-zA-Z]{3,15}\b/g
       const words = fallbackCaption.match(wordPattern) || []
       const fallbackTags = [...new Set(words.map(w => w.toLowerCase()))].slice(0, 10)
-      
-      return { 
-        caption: fallbackCaption || "Image content", 
-        tags: fallbackTags.length > 0 ? fallbackTags : ["image", "content"] 
+
+      return {
+        caption: fallbackCaption || "Image content",
+        tags: fallbackTags.length > 0 ? fallbackTags : ["image", "content"]
       }
     }
   } catch (error) {
@@ -268,7 +268,7 @@ export async function generateTextEmbedding(text: string, normalize: boolean = t
   try {
     // Normalize text for consistent embedding matching
     const processedText = normalize ? normalizeTextForEmbedding(text) : text
-    
+
     const result = await model.embedContent(processedText)
     const embedding = result.embedding
 
@@ -310,13 +310,13 @@ export async function extractImageTags(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`🏷️  Extracting tags for ${fileId} (thumbnail: ${useThumbnail}) - Attempt ${attempt}/${maxRetries}`)
-      
+
       // Rate limiting
       await geminiRateLimiter.waitIfNeeded()
 
       // Download image (thumbnail or full) with timeout
       const downloadStart = Date.now()
-      const imageBuffer = useThumbnail 
+      const imageBuffer = useThumbnail
         ? await downloadThumbnail(fileId, 3)
         : await downloadWithRetry(fileId, 3)
       const downloadTime = Date.now() - downloadStart
@@ -359,7 +359,7 @@ Return ONLY a JSON object with this exact format:
       try {
         // Parse JSON response
         const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, '').trim())
-        
+
         const tags = Array.isArray(parsed.tags) ? parsed.tags : []
         const quickDescription = parsed.quickDescription || `Image with tags: ${tags.slice(0, 3).join(', ')}`
 
@@ -386,7 +386,7 @@ Return ONLY a JSON object with this exact format:
     } catch (error) {
       const isLastAttempt = attempt === maxRetries
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      
+
       console.error(`Fast tagging error (attempt ${attempt}/${maxRetries}):`, errorMessage)
 
       if (isLastAttempt) {
@@ -409,69 +409,69 @@ Return ONLY a JSON object with this exact format:
 async function downloadThumbnail(fileId: string, maxRetries = 3): Promise<Buffer> {
   // First, get the thumbnail URL from the API
   const drive = getDriveClient()
-  
+
   try {
     const fileResponse = await drive.files.get({
       fileId: fileId,
       fields: "thumbnailLink"
     })
-    
+
     // Request a large thumbnail (1024px)
     let thumbnailUrl = fileResponse.data.thumbnailLink
     if (thumbnailUrl) {
-        // Modify URL to get a larger version if possible (s220 is default, change to s1024)
-        thumbnailUrl = thumbnailUrl.replace(/=s\d+/, '=s1024')
+      // Modify URL to get a larger version if possible (s220 is default, change to s1024)
+      thumbnailUrl = thumbnailUrl.replace(/=s\d+/, '=s1024')
     }
 
     if (!thumbnailUrl) {
       throw new Error("No thumbnail available, falling back to full image")
     }
-    
+
     console.log(`📸 Downloading thumbnail: ${fileId}`)
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Rate limit Google Drive requests
         await driveRateLimiter.waitIfNeeded()
-        
+
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 15000) // Shorter timeout for thumbnails
-        
+
         const response = await fetch(thumbnailUrl, {
           headers: {
             "User-Agent": "Drive-Image-Searcher/1.0",
           },
           signal: controller.signal,
         })
-        
+
         clearTimeout(timeoutId)
-        
+
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`)
         }
-        
+
         const arrayBuffer = await response.arrayBuffer()
         const buffer = Buffer.from(arrayBuffer)
-        
+
         console.log(`✅ Successfully downloaded thumbnail: ${fileId} (${buffer.length} bytes)`)
         return buffer
-        
+
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error'
         console.log(`❌ Thumbnail download attempt ${attempt}/${maxRetries} failed: ${errorMessage}`)
-        
+
         if (attempt === maxRetries) {
           throw new Error(`Failed to download thumbnail after ${maxRetries} attempts`)
         }
-        
+
         // Short backoff for thumbnails
         const delay = Math.pow(1.5, attempt) * 500 // 750ms, 1.1s, 1.7s
         await new Promise(resolve => setTimeout(resolve, delay))
       }
     }
-    
+
     throw new Error("Should never reach here")
-    
+
   } catch {
     console.warn(`Thumbnail not available for ${fileId}, falling back to full image`)
     return downloadWithRetry(fileId, maxRetries)
