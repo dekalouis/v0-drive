@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { imageQueue } from "@/lib/queue"
+import { imageQueue, queueImageBatch } from "@/lib/queue"
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,7 +19,13 @@ export async function POST(request: NextRequest) {
       
       const image = await prisma.image.findUnique({
         where: { id: imageId },
-        include: { folder: true }
+        select: {
+          id: true,
+          fileId: true,
+          name: true,
+          mimeType: true,
+          folderId: true,
+        }
       })
 
       if (!image) {
@@ -29,16 +35,12 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Reset image status to pending
-      // Note: captionVec will be overwritten when the image is reprocessed
-      await prisma.image.update({
-        where: { id: imageId },
-        data: { 
-          status: "pending",
-          caption: null,
-          tags: null,
-        }
-      })
+      // Reset image status to pending using raw SQL (captionVec is an Unsupported type)
+      await prisma.$executeRaw`
+        UPDATE images 
+        SET status = 'pending', caption = NULL, tags = NULL, "captionVec" = NULL, error = NULL
+        WHERE id = ${imageId}
+      `
 
       // Add to image processing queue
       await imageQueue.add("image", {
@@ -57,56 +59,107 @@ export async function POST(request: NextRequest) {
       })
 
     } else if (folderId) {
-      // Retry all failed images in folder
-      console.log(`🔄 Retrying all failed images in folder: ${folderId}`)
+      // Retry all failed AND pending images in folder
+      console.log(`🔄 Retrying all failed and pending images in folder: ${folderId}`)
       
-      const failedImages = await prisma.image.findMany({
-        where: { 
-          folderId,
-          status: "failed"
-        }
+      const folder = await prisma.folder.findUnique({
+        where: { id: folderId },
+        select: { id: true, status: true }
       })
 
-      if (failedImages.length === 0) {
+      if (!folder) {
         return NextResponse.json(
-          { error: "No failed images found in this folder" },
+          { error: "Folder not found" },
           { status: 404 }
         )
       }
 
-      // Reset all failed images to pending
-      // Note: captionVec will be overwritten when images are reprocessed
-      await prisma.image.updateMany({
+      // Get failed images
+      const failedImages = await prisma.image.findMany({
         where: { 
           folderId,
           status: "failed"
         },
-        data: { 
-          status: "pending",
-          caption: null,
-          tags: null,
+        select: {
+          id: true,
+          fileId: true,
+          etag: true,
+          name: true,
+          mimeType: true,
+          folderId: true,
         }
       })
 
-      // Add all failed images to queue
-      const jobs = failedImages.map(image => ({
-        name: "image",
-        data: {
-          fileId: image.fileId,
-          name: image.name,
-          mimeType: image.mimeType,
-          folderId: image.folderId,
-          imageId: image.id
+      // Get pending images
+      const pendingImages = await prisma.image.findMany({
+        where: { 
+          folderId,
+          status: "pending"
+        },
+        select: {
+          id: true,
+          fileId: true,
+          etag: true,
+          name: true,
+          mimeType: true,
+          folderId: true,
         }
-      }))
+      })
 
-      await imageQueue.addBulk(jobs)
+      const allImages = [...failedImages, ...pendingImages]
 
-      console.log(`✅ Queued ${failedImages.length} failed images for retry`)
+      if (allImages.length === 0) {
+        return NextResponse.json(
+          { error: "No failed or pending images found in this folder" },
+          { status: 404 }
+        )
+      }
+
+      // Reset all failed images to pending using raw SQL (captionVec is an Unsupported type)
+      if (failedImages.length > 0) {
+      await prisma.$executeRaw`
+        UPDATE images 
+        SET status = 'pending', caption = NULL, tags = NULL, "captionVec" = NULL, error = NULL
+        WHERE "folderId" = ${folderId} AND status = 'failed'
+      `
+      }
+
+      // Update folder status to processing
+      if (folder.status !== "processing") {
+        await prisma.folder.update({
+          where: { id: folderId },
+          data: { status: "processing" },
+        })
+      }
+
+      // Queue images in batches of 5 (same as folder worker)
+      const batchSize = 5
+      let queuedBatches = 0
+      
+      for (let i = 0; i < allImages.length; i += batchSize) {
+        const batch = allImages.slice(i, i + batchSize)
+        const batchData = batch.map(img => ({
+          imageId: img.id,
+          fileId: img.fileId,
+          etag: img.etag || "unknown",
+          folderId: img.folderId,
+          mimeType: img.mimeType,
+          name: img.name
+        }))
+        
+        await queueImageBatch({
+          images: batchData,
+          folderId: folder.id,
+          accessToken: undefined
+        })
+        queuedBatches++
+      }
+
+      console.log(`✅ Queued ${queuedBatches} batches (${allImages.length} images) for retry`)
       
       return NextResponse.json({ 
         success: true, 
-        message: `${failedImages.length} images queued for retry` 
+        message: `${allImages.length} images queued for processing (${failedImages.length} failed, ${pendingImages.length} pending)` 
       })
     }
 
