@@ -33,7 +33,7 @@
     "deploy:migrate": "./scripts/deploy-migrate.sh"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.36.0",
+    "@clerk/nextjs": "^6.36.5",
     "@google/generative-ai": "^0.21.0",
     "@prisma/client": "^5.22.0",
     "@radix-ui/react-accordion": "^1.2.1",
